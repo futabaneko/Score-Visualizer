@@ -101,16 +101,7 @@ export const INSTRUMENTS: Instrument[] = [
     color: '#FFEB3B',
     minecraftSound: 'minecraft:block.note.hat',
     octaveOffset: 0,
-  },
-  {
-    id: 'exp',
-    symbol: '~',
-    name: 'Experience',
-    nameJa: '経験値',
-    color: '#76FF03',
-    minecraftSound: 'minecraft:entity.experience_orb.pickup',
-    octaveOffset: 0,
-  },
+  }
 ];
 
 // 音程の定義（A-Y = 25段階）

@@ -146,8 +146,8 @@ export const Toolbar: React.FC = () => {
   };
 
   return (
-    <div className="px-6 py-5 bg-gradient-to-b from-slate-800 to-slate-800/95 backdrop-blur-md border-b border-slate-700/50 shadow-lg">
-      <div className="flex items-center gap-6 overflow-x-auto scrollbar-hide">
+    <div className="px-6 py-4 bg-gradient-to-b from-slate-800 to-slate-800/95 backdrop-blur-md border-b border-slate-700/50 shadow-lg">
+      <div className="flex items-center gap-4 flex-wrap">
         {/* ロゴ */}
         <div className="flex items-center gap-4 pr-6 border-r border-slate-600/40 flex-shrink-0">
           <div className="w-9 h-9 flex items-center justify-center">
@@ -247,11 +247,11 @@ export const Toolbar: React.FC = () => {
                     ? `0 4px 12px -2px ${instrument.color}50` 
                     : undefined,
                 }}
-                title={`${instrument.nameJa} (${instrument.symbol}) [${instrument.octaveOffset >= 0 ? '+' : ''}${instrument.octaveOffset}oct]`}
+                title={`${instrument.nameJa} (${instrument.symbol})`}
               >
                 {instrument.symbol}
                 {/* Tooltip */}
-                <span className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-slate-700 shadow-xl z-20">
+                <span className="absolute -bottom-10 left-1/2 transform -translate-x-1/2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-slate-700 shadow-xl z-[100]">
                   {instrument.nameJa}
                 </span>
               </button>

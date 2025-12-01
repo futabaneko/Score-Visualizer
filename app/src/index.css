@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Tailwind v4: スキャン対象のファイルを指定 */
+@source "../index.html";
+@source "./**/*.{js,ts,jsx,tsx}";
+
 :root {
   font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
   line-height: 1.5;
@@ -8,10 +12,10 @@
   background-color: #0f172a;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
 /* Custom scrollbar - Dark theme */

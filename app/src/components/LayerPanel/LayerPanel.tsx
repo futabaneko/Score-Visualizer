@@ -354,7 +354,7 @@ export const LayerPanel: React.FC = () => {
         <div className="mb-4 pb-4 border-b border-slate-700/50">
           <div
             className={`
-              group flex items-center gap-3 p-3 rounded-xl cursor-pointer
+              group flex flex-col gap-2 p-3 rounded-xl cursor-pointer
               transition-all duration-200 border
               ${activeLayerId === globalLayer.id 
                 ? 'bg-slate-700/50 border-slate-600 shadow-sm' 
@@ -363,30 +363,34 @@ export const LayerPanel: React.FC = () => {
             `}
             onClick={() => setActiveLayer(globalLayer.id)}
           >
-            <div className={`p-1.5 rounded-lg transition-colors ${activeLayerId === globalLayer.id ? 'bg-slate-600 text-slate-200' : 'bg-slate-700/50 text-slate-400 group-hover:text-slate-300'}`}>
-              <GlobalIcon />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm text-slate-200 font-semibold">
+            {/* 上段: アイコンと名前 */}
+            <div className="flex items-center gap-2">
+              <div className={`p-1.5 rounded-lg transition-colors ${activeLayerId === globalLayer.id ? 'bg-slate-600 text-slate-200' : 'bg-slate-700/50 text-slate-400 group-hover:text-slate-300'}`}>
+                <GlobalIcon />
+              </div>
+              <span className="text-sm text-slate-200 font-semibold">
                 {globalLayer.name}
-              </div>
-              <div className="flex items-center gap-2 text-[10px] text-slate-500">
-                <span>All Layers</span>
-                <span className="bg-slate-700/50 px-1.5 py-0.5 rounded-full text-slate-400">{notes.length} notes</span>
-              </div>
+              </span>
             </div>
             
-            {/* エクスポートのみ */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleExport(globalLayer.id);
-              }}
-              className="p-1.5 text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-              title="全体をエクスポート"
-            >
-              <ExportIcon />
-            </button>
+            {/* 下段: ノート数とエクスポートボタン */}
+            <div className="flex items-center justify-between pl-1">
+              <span className="text-[10px] text-slate-500">
+                {notes.length} notes
+              </span>
+              
+              {/* エクスポートのみ */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleExport(globalLayer.id);
+                }}
+                className="p-1 text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/20 rounded transition-colors opacity-0 group-hover:opacity-100"
+                title="全体をエクスポート"
+              >
+                <ExportIcon />
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -397,8 +401,8 @@ export const LayerPanel: React.FC = () => {
           <div
             key={layer.id}
             className={`
-              group flex items-center gap-3 p-2.5 rounded-xl cursor-pointer
-              transition-all duration-200 border relative overflow-hidden
+              group flex flex-col gap-2 p-3 rounded-xl cursor-pointer
+              transition-all duration-200 border relative
               ${activeLayerId === layer.id 
                 ? 'bg-blue-500/10 border-blue-500/30 shadow-sm' 
                 : 'bg-slate-800/30 border-transparent hover:bg-slate-700/30 hover:border-slate-700/50'
@@ -408,17 +412,17 @@ export const LayerPanel: React.FC = () => {
           >
             {/* アクティブインジケータ */}
             {activeLayerId === layer.id && (
-              <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500" />
+              <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500 rounded-l-xl" />
             )}
 
-            {/* 色インジケータ */}
-            <div
-              className="w-3 h-3 rounded-full flex-shrink-0 ring-2 ring-slate-800 shadow-sm ml-1"
-              style={{ backgroundColor: layer.color }}
-            />
-
-            {/* レイヤー名 */}
-            <div className="flex-1 min-w-0">
+            {/* 上段: レイヤー名 */}
+            <div className="flex items-center gap-2 pl-1">
+              {/* 色インジケータ */}
+              <div
+                className="w-3 h-3 rounded-full flex-shrink-0 ring-2 ring-slate-800 shadow-sm"
+                style={{ backgroundColor: layer.color }}
+              />
+              
               {editingLayerId === layer.id ? (
                 <input
                   type="text"
@@ -426,31 +430,32 @@ export const LayerPanel: React.FC = () => {
                   onChange={(e) => setEditingName(e.target.value)}
                   onBlur={handleFinishRename}
                   onKeyDown={handleKeyDown}
-                  className="w-full px-2 py-1 text-sm bg-slate-900 border border-blue-500 rounded focus:outline-none text-slate-200"
+                  className="flex-1 px-2 py-1 text-sm bg-slate-900 border border-blue-500 rounded focus:outline-none text-slate-200"
                   autoFocus
                   onClick={(e) => e.stopPropagation()}
                 />
               ) : (
-                <div
-                  className="flex flex-col"
+                <span
+                  className={`flex-1 text-sm font-medium truncate ${activeLayerId === layer.id ? 'text-blue-100' : 'text-slate-300'}`}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     handleStartRename(layer.id, layer.name);
                   }}
                   title={`${layer.name} (ダブルクリックで名前変更)`}
                 >
-                  <span className={`text-sm font-medium truncate ${activeLayerId === layer.id ? 'text-blue-100' : 'text-slate-300'}`}>
-                    {layer.name}
-                  </span>
-                  <span className="text-[10px] text-slate-500">
-                    {noteCountByLayer[layer.id] || 0} notes
-                  </span>
-                </div>
+                  {layer.name}
+                </span>
               )}
             </div>
 
-            {/* コントロールボタン */}
-            <div className={`flex items-center gap-0.5 ${activeLayerId === layer.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
+            {/* 下段: ノート数とコントロールボタン */}
+            <div className="flex items-center justify-between pl-1">
+              <span className="text-[10px] text-slate-500">
+                {noteCountByLayer[layer.id] || 0} notes
+              </span>
+              
+              {/* コントロールボタン */}
+              <div className={`flex items-center gap-0.5 ${activeLayerId === layer.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
               {/* インポート */}
               <button
                 onClick={(e) => {
@@ -522,6 +527,7 @@ export const LayerPanel: React.FC = () => {
                   <TrashIcon />
                 </button>
               )}
+              </div>
             </div>
           </div>
         ))}
