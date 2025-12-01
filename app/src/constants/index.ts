@@ -2,7 +2,7 @@ import type { Instrument } from '../types';
 
 // Minecraft音ブロックの楽器定義
 // octaveOffset: 全体表示時のオクターブオフセット（12音 = 1オクターブ）
-export const INSTRUMENTS: Instrument[] = [
+export const INSTRUMENTS: readonly Instrument[] = [
   {
     id: 'pling',
     symbol: '*',
@@ -105,10 +105,14 @@ export const INSTRUMENTS: Instrument[] = [
 ];
 
 // 音程の定義（A-Y = 25段階）
-export const PITCHES = 'ABCDEFGHIJKLMNOPQRSTUVWXY'.split('');
+// 音程の定義（A-Y = 25段階）
+export const PITCHES = 'ABCDEFGHIJKLMNOPQRSTUVWXY'.split('') as readonly string[];
+
+// ピッチ文字の型
+export type PitchLetter = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y';
 
 // ピッチ値（Minecraft音ブロックのピッチ）
-export const PITCH_VALUES: Record<string, number> = {
+export const PITCH_VALUES: Readonly<Record<PitchLetter, number>> = {
   A: 0.5,
   B: 0.5297,
   C: 0.5612,
@@ -134,7 +138,7 @@ export const PITCH_VALUES: Record<string, number> = {
   W: 1.7817,
   X: 1.8877,
   Y: 2.0,
-};
+} as const;
 
 // 音符名（表示用）
 export const NOTE_NAMES = [

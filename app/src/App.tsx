@@ -1,19 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Toolbar, PianoRoll, LayerPanel } from './components';
 import { useScoreStore } from './store/useScoreStore';
 
 function App() {
   const [showRestoreNotice, setShowRestoreNotice] = useState(false);
   const notes = useScoreStore((state) => state.notes);
+  const initialNotesCountRef = useRef(notes.length);
   
   // 初回マウント時に復元されたデータがあれば通知
   useEffect(() => {
-    if (notes.length > 0) {
+    if (initialNotesCountRef.current > 0) {
       setShowRestoreNotice(true);
       const timer = setTimeout(() => setShowRestoreNotice(false), 4000);
       return () => clearTimeout(timer);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="h-screen flex flex-col bg-slate-900 text-slate-100 overflow-hidden">

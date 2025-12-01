@@ -48,7 +48,6 @@ export const Toolbar: React.FC = () => {
     notes,
     layers,
     playback,
-    bpm,
     totalTicks,
     settings,
     history,
@@ -104,7 +103,6 @@ export const Toolbar: React.FC = () => {
       
       stopFnRef.current = await playScore(
         visibleNotes,
-        bpm,
         (tick) => setCurrentTick(tick),
         () => {
           setPlaying(false);
@@ -113,7 +111,7 @@ export const Toolbar: React.FC = () => {
         startTick
       );
     }
-  }, [isPlaying, notes, layers, bpm, currentTick, setPlaying, setCurrentTick]);
+  }, [isPlaying, notes, layers, currentTick, setPlaying, setCurrentTick]);
 
   // 先頭に戻る
   const handleRewind = useCallback(() => {
@@ -146,34 +144,32 @@ export const Toolbar: React.FC = () => {
   };
 
   return (
-    <div className="px-6 py-4 bg-gradient-to-b from-slate-800 to-slate-800/95 backdrop-blur-md border-b border-slate-700/50 shadow-lg">
+    <div className="px-6 py-2 bg-gradient-to-b from-slate-800 to-slate-800/95 backdrop-blur-md border-b border-slate-700/50 shadow-lg">
       <div className="flex items-center gap-4 flex-wrap">
         {/* ロゴ */}
-        <div className="flex items-center gap-4 pr-6 border-r border-slate-600/40 flex-shrink-0">
-          <div className="w-9 h-9 flex items-center justify-center">
-            {/* Minecraft風立方体ロゴ */}
-            <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none">
-              {/* 上面 */}
-              <path d="M12 2L22 7L12 12L2 7L12 2Z" fill="#64748b" stroke="#94a3b8" strokeWidth="0.5"/>
-              {/* 左側面 */}
-              <path d="M2 7L12 12V22L2 17V7Z" fill="#475569" stroke="#64748b" strokeWidth="0.5"/>
-              {/* 右側面 */}
-              <path d="M22 7L12 12V22L22 17V7Z" fill="#334155" stroke="#475569" strokeWidth="0.5"/>
+        <div className="flex items-center gap-3 pr-6 border-r border-slate-600/40 flex-shrink-0">
+          <div className="w-8 h-8 flex items-center justify-center">
+            {/* シンプルな立方体アイコン */}
+            <svg className="w-7 h-7" viewBox="0 0 32 32" fill="none">
+              <path d="M16 4L28 10L16 16L4 10L16 4Z" fill="#64748b"/>
+              <path d="M4 10L16 16V28L4 22V10Z" fill="#475569"/>
+              <path d="M28 10L16 16V28L28 22V10Z" fill="#334155"/>
             </svg>
           </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="font-semibold text-slate-200 tracking-tight">Score Editor</span>
+          <div className="flex flex-col">
+            <span className="font-semibold text-slate-200 tracking-tight text-sm">Score Editor</span>
             <span className="text-[10px] text-slate-500">Minecraft 音ブロック</span>
           </div>
         </div>
 
         {/* 再生コントロール */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2 flex-shrink-0" role="group" aria-label="再生コントロール">
           {/* 先頭に戻る */}
           <button
             onClick={handleRewind}
             className="flex items-center justify-center p-2.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-600/60 transition-all active:scale-95"
             title="先頭に戻る"
+            aria-label="先頭に戻る"
           >
             <RewindIcon />
           </button>
@@ -181,6 +177,7 @@ export const Toolbar: React.FC = () => {
           {/* 再生/停止 */}
           <button
             onClick={handlePlayStop}
+            aria-label={isPlaying ? '停止' : '再生'}
             className={`
               flex items-center justify-center gap-2.5 min-w-[100px] px-6 py-2.5 rounded-lg text-sm font-bold
               transition-all duration-200 shadow-md active:scale-[0.98]
@@ -196,13 +193,14 @@ export const Toolbar: React.FC = () => {
         </div>
 
         {/* Undo/Redo */}
-        <div className="flex items-center pl-2 border-l border-slate-600/40 flex-shrink-0">
+        <div className="flex items-center pl-2 border-l border-slate-600/40 flex-shrink-0" role="group" aria-label="編集履歴">
           <div className="flex bg-slate-700/30 rounded-lg p-1 gap-1">
             <button
               onClick={undo}
               disabled={!canUndo}
               className="p-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-600/60 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
               title="元に戻す (Ctrl+Z)"
+              aria-label="元に戻す"
             >
               <UndoIcon />
             </button>
@@ -211,6 +209,7 @@ export const Toolbar: React.FC = () => {
               disabled={!canRedo}
               className="p-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-600/60 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
               title="やり直す (Ctrl+Y)"
+              aria-label="やり直す"
             >
               <RedoIcon />
             </button>
@@ -218,18 +217,21 @@ export const Toolbar: React.FC = () => {
         </div>
 
         {/* 楽器パレット */}
-        <div className="flex items-center gap-4 pl-4 border-l border-slate-600/40 flex-shrink-0">
+        <div className="flex items-center gap-4 pl-4 border-l border-slate-600/40 flex-shrink-0" role="group" aria-label="楽器パレット">
           <div className="flex items-center gap-2">
-            <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
             </svg>
             <span className="text-xs font-medium text-slate-400">Instruments</span>
           </div>
-          <div className="flex gap-1.5 bg-slate-900/40 p-2 rounded-lg border border-slate-700/40">
+          <div className="flex gap-1.5 bg-slate-900/40 p-2 rounded-lg border border-slate-700/40" role="radiogroup" aria-label="楽器選択">
             {INSTRUMENTS.map((instrument) => (
               <button
                 key={instrument.id}
                 onClick={() => handleInstrumentClick(instrument.id)}
+                role="radio"
+                aria-checked={selectedInstrument === instrument.id}
+                aria-label={instrument.nameJa}
                 className={`
                   w-8 h-8 rounded-md flex items-center justify-center
                   text-sm font-bold transition-all duration-150 relative group
@@ -251,7 +253,7 @@ export const Toolbar: React.FC = () => {
               >
                 {instrument.symbol}
                 {/* Tooltip */}
-                <span className="absolute -bottom-10 left-1/2 transform -translate-x-1/2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-slate-700 shadow-xl z-[100]">
+                <span className="absolute -bottom-10 left-1/2 transform -translate-x-1/2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-slate-700 shadow-xl z-[100]" aria-hidden="true">
                   {instrument.nameJa}
                 </span>
               </button>

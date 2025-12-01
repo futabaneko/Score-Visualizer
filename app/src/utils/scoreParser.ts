@@ -46,7 +46,7 @@ export function parseScore(score: string): Note[] {
       const pitch = PITCHES.indexOf(char);
 
       notes.push({
-        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        id: `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
         tick: currentTick,
         pitch,
         instrument: instrumentId,
@@ -97,5 +97,5 @@ export function generateScore(notes: Note[]): string {
  * ユニークなIDを生成
  */
 export function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 }

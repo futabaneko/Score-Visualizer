@@ -1,4 +1,5 @@
 import { PITCH_VALUES, PITCHES } from '../constants';
+import type { PitchLetter } from '../constants';
 import type { Note } from '../types';
 
 // 楽器IDからサウンドファイル名へのマッピング
@@ -48,7 +49,7 @@ function getMasterGainNode(): GainNode {
 /**
  * サウンドファイルをロードしてキャッシュ
  */
-async function loadSound(instrumentId: string): Promise<AudioBuffer> {
+async function loadSound(instrumentId: string): Promise<AudioBuffer | null> {
   const soundFile = INSTRUMENT_SOUND_FILES[instrumentId] || 'pling.ogg';
   const cacheKey = soundFile;
 
@@ -56,13 +57,24 @@ async function loadSound(instrumentId: string): Promise<AudioBuffer> {
     return audioBufferCache[cacheKey];
   }
 
-  const ctx = getAudioContext();
-  const response = await fetch(`/sound/${soundFile}`);
-  const arrayBuffer = await response.arrayBuffer();
-  const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-  
-  audioBufferCache[cacheKey] = audioBuffer;
-  return audioBuffer;
+  try {
+    const ctx = getAudioContext();
+    const response = await fetch(`/sound/${soundFile}`);
+    
+    if (!response.ok) {
+      console.warn(`Failed to load sound: ${soundFile} (${response.status})`);
+      return null;
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    
+    audioBufferCache[cacheKey] = audioBuffer;
+    return audioBuffer;
+  } catch (error) {
+    console.warn(`Failed to load sound: ${soundFile}`, error);
+    return null;
+  }
 }
 
 /**
@@ -70,7 +82,9 @@ async function loadSound(instrumentId: string): Promise<AudioBuffer> {
  */
 export async function preloadSounds(): Promise<void> {
   const instruments = Object.keys(INSTRUMENT_SOUND_FILES);
-  await Promise.all(instruments.map(loadSound));
+  const results = await Promise.all(instruments.map(loadSound));
+  const loadedCount = results.filter(Boolean).length;
+  console.log(`Preloaded ${loadedCount}/${instruments.length} sounds`);
 }
 
 /**
@@ -78,7 +92,7 @@ export async function preloadSounds(): Promise<void> {
  * ピッチA(0)が0.5、ピッチM(12)が1.0、ピッチY(24)が2.0
  */
 function pitchToPlaybackRate(pitch: number): number {
-  const pitchLetter = PITCHES[pitch];
+  const pitchLetter = PITCHES[pitch] as PitchLetter;
   return PITCH_VALUES[pitchLetter];
 }
 
@@ -97,7 +111,9 @@ export function playNote(instrumentId: string, pitch: number): void {
     
     if (!buffer) {
       // バッファがない場合は非同期でロード（初回のみ）
-      loadSound(instrumentId).then(() => playNote(instrumentId, pitch));
+      loadSound(instrumentId).then((loaded) => {
+        if (loaded) playNote(instrumentId, pitch);
+      });
       return;
     }
     
@@ -145,11 +161,13 @@ export function playNoteBatch(notes: Array<{ instrument: string; pitch: number }
 /**
  * スコア全体を再生（requestAnimationFrameベースで滑らかに再生）
  * 補間を使ってディスプレイのリフレッシュレートに同期（60/120/144fps等に自動対応）
+ * @param notes 再生する音符の配列
+ * @param onTick 現在のtick位置を通知するコールバック
+ * @param onComplete 再生完了時のコールバック
  * @param startFromTick 再生開始位置（デフォルト: 0）
  */
 export async function playScore(
   notes: Note[],
-  _bpm: number,
   onTick: (tick: number) => void,
   onComplete: () => void,
   startFromTick: number = 0

@@ -286,7 +286,7 @@ export const LayerPanel: React.FC = () => {
   return (
     <div className="p-5 pt-6 h-full flex flex-col bg-gradient-to-b from-slate-800/50 to-slate-900/30">
       {/* プロジェクト保存・読み込み */}
-      <div className="mb-5 pb-5 border-b border-slate-700/50">
+      <div className="mb-3 pb-3 border-b border-slate-700/50">
         <div className="flex items-center gap-2.5 mb-3">
           <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
@@ -333,7 +333,7 @@ export const LayerPanel: React.FC = () => {
       </div>
 
       {/* ヘッダー */}
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2.5">
           <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
@@ -351,7 +351,7 @@ export const LayerPanel: React.FC = () => {
 
       {/* 全体レイヤー（固定表示） */}
       {globalLayer && (
-        <div className="mb-4 pb-4 border-b border-slate-700/50">
+        <div className="mb-2 pb-4 border-b border-slate-700/50">
           <div
             className={`
               group flex flex-col gap-2 p-3 rounded-xl cursor-pointer
@@ -365,7 +365,7 @@ export const LayerPanel: React.FC = () => {
           >
             {/* 上段: アイコンと名前 */}
             <div className="flex items-center gap-2">
-              <div className={`p-1.5 rounded-lg transition-colors ${activeLayerId === globalLayer.id ? 'bg-slate-600 text-slate-200' : 'bg-slate-700/50 text-slate-400 group-hover:text-slate-300'}`}>
+              <div className={`p-1 rounded-lg transition-colors ${activeLayerId === globalLayer.id ? 'bg-slate-600 text-slate-200' : 'bg-slate-700/50 text-slate-400 group-hover:text-slate-300'}`}>
                 <GlobalIcon />
               </div>
               <span className="text-sm text-slate-200 font-semibold">
@@ -416,7 +416,7 @@ export const LayerPanel: React.FC = () => {
             )}
 
             {/* 上段: レイヤー名 */}
-            <div className="flex items-center gap-2 pl-1">
+            <div className="flex items-center gap-2 pl-1 min-h-[24px]">
               {/* 色インジケータ */}
               <div
                 className="w-3 h-3 rounded-full flex-shrink-0 ring-2 ring-slate-800 shadow-sm"
@@ -430,7 +430,7 @@ export const LayerPanel: React.FC = () => {
                   onChange={(e) => setEditingName(e.target.value)}
                   onBlur={handleFinishRename}
                   onKeyDown={handleKeyDown}
-                  className="flex-1 px-2 py-1 text-sm bg-slate-900 border border-blue-500 rounded focus:outline-none text-slate-200"
+                  className="flex-1 px-2 py-0.5 text-sm bg-slate-900 border border-blue-500 rounded focus:outline-none text-slate-200 min-w-0"
                   autoFocus
                   onClick={(e) => e.stopPropagation()}
                 />

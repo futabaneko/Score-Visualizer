@@ -9,6 +9,7 @@ import {
   PIANO_KEY_WIDTH,
 } from '../../constants';
 import { playNote } from '../../utils/audioEngine';
+import type { Note } from '../../types';
 
 type DragMode = 'none' | 'erase' | 'select';
 
@@ -68,7 +69,7 @@ const NoteLayer = React.memo(({
   visibleTickRange,
   visiblePitchRange,
 }: {
-  groupedNotes: Map<string, { note: any; displayPitch: number }[]>;
+  groupedNotes: Map<string, { note: Note; displayPitch: number }[]>;
   cellWidth: number;
   cellHeight: number;
   currentPitchCount: number;
@@ -185,14 +186,17 @@ const NoteLayer = React.memo(({
   );
 });
 
+// React DevTools でのデバッグ用に displayName を設定
+NoteLayer.displayName = 'NoteLayer';
+
 export const PianoRoll: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragMode, setDragMode] = useState<DragMode>('none');
   const [dragStart, setDragStart] = useState<{ tick: number; pitch: number } | null>(null);
   const [dragEnd, setDragEnd] = useState<{ tick: number; pitch: number } | null>(null);
   
-  // 自動スクロール用の状態
-  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  // 自動スクロール用の状態（将来的にユーザー設定から変更できるようにする予定）
+  const autoScrollEnabled = true;
   
   // ビューポート範囲の状態（仮想化用）
   const [viewportState, setViewportState] = useState({
@@ -227,7 +231,6 @@ export const PianoRoll: React.FC = () => {
     addNote,
     removeNotesAt,
     removeNote,
-    selectNote,
     selectNotesInRange,
     selectedNotes,
     deselectAll,
@@ -319,11 +322,11 @@ export const PianoRoll: React.FC = () => {
     return groups;
   }, [notes, visibleLayerIds, isGlobalLayerActive]);
 
-  // グリッドへのスナップ
-  const snapToGridValue = (tick: number): number => {
+  // グリッドへのスナップ（useCallbackでメモ化）
+  const snapToGridValue = useCallback((tick: number): number => {
     if (!snapToGrid) return tick;
     return Math.round(tick / gridSize) * gridSize;
-  };
+  }, [snapToGrid, gridSize]);
 
   // マウス位置から座標を計算
   const getPositionFromEvent = useCallback(
@@ -361,7 +364,7 @@ export const PianoRoll: React.FC = () => {
 
       return { tick, pitch };
     },
-    [cellWidth, snapToGrid, gridSize, totalTicks, isGlobalLayerActive]
+    [cellWidth, snapToGridValue, totalTicks, isGlobalLayerActive]
   );
 
   // マウスダウン処理
