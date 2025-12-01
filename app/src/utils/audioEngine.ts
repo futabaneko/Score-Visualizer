@@ -59,7 +59,8 @@ async function loadSound(instrumentId: string): Promise<AudioBuffer | null> {
 
   try {
     const ctx = getAudioContext();
-    const response = await fetch(`/sound/${soundFile}`);
+    const baseUrl = import.meta.env.BASE_URL || '/';
+    const response = await fetch(`${baseUrl}sound/${soundFile}`);
     
     if (!response.ok) {
       console.warn(`Failed to load sound: ${soundFile} (${response.status})`);
