@@ -915,9 +915,6 @@ export const PianoRoll: React.FC = () => {
           >
             {/* 水平線 */}
             {Array.from({ length: currentPitchCount }).map((_, index) => {
-              // noteIndex: この線の上にある音のインデックス（下から数えて）
-              const noteIndexAbove = currentPitchCount - 1 - index;
-              
               // 通常範囲の境界線（青）: pitch 0〜24 が offset=0 で配置できる範囲
               // 上境界: noteIndex = NORMAL_PITCH_OFFSET + 24 の上 → index = 73-1-48 = 24
               // 下境界: noteIndex = NORMAL_PITCH_OFFSET - 1 の下 → index = 73-1-23 = 49

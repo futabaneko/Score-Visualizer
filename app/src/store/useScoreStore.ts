@@ -682,7 +682,7 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       playback: {
         isPlaying: false,
         currentTick: 0,
-        autoScrollEnabled: true,
+        startTime: null,
       },
     });
     
