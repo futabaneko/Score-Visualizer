@@ -1,9 +1,15 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useState, useEffect } from 'react';
 import { useScoreStore } from '../../store/useScoreStore';
 import { playScore, stopAll, playNote } from '../../utils/audioEngine';
 import { INSTRUMENTS } from '../../constants';
 
 // アイコンコンポーネント
+const NewIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+  </svg>
+);
+
 const PlayIcon = () => (
   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
     <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
@@ -43,6 +49,9 @@ const RewindIcon = () => (
 
 export const Toolbar: React.FC = () => {
   const stopFnRef = useRef<(() => void) | null>(null);
+  
+  // Shiftキーの状態を追跡
+  const [isShiftPressed, setIsShiftPressed] = useState(false);
 
   const {
     notes,
@@ -52,6 +61,7 @@ export const Toolbar: React.FC = () => {
     settings,
     history,
     historyIndex,
+    checkpoint,
     setPlaying,
     setCurrentTick,
     clearNotes,
@@ -62,7 +72,24 @@ export const Toolbar: React.FC = () => {
     setSelectedInstrument,
     undo,
     redo,
+    resetProject,
   } = useScoreStore();
+
+  // Shiftキーの監視
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setIsShiftPressed(true);
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setIsShiftPressed(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < history.length - 1;
@@ -77,7 +104,8 @@ export const Toolbar: React.FC = () => {
 
   // 再生/停止（表示されているレイヤーのみ再生）
   // 停止時は現在位置を保持し、次回再生時はその位置から開始
-  const handlePlayStop = useCallback(async () => {
+  // fromCheckpoint: trueの場合はチェックポイントから再生
+  const handlePlayStop = useCallback(async (fromCheckpoint = false) => {
     if (isPlaying) {
       if (stopFnRef.current) {
         stopFnRef.current();
@@ -96,8 +124,8 @@ export const Toolbar: React.FC = () => {
         return;
       }
       
-      // 現在のtick位置から再生開始
-      const startTick = Math.floor(currentTick);
+      // チェックポイントから再生する場合はチェックポイント位置から、それ以外は現在位置から
+      const startTick = fromCheckpoint && checkpoint !== null ? checkpoint : Math.floor(currentTick);
       
       setPlaying(true);
       
@@ -111,7 +139,7 @@ export const Toolbar: React.FC = () => {
         startTick
       );
     }
-  }, [isPlaying, notes, layers, currentTick, setPlaying, setCurrentTick]);
+  }, [isPlaying, notes, layers, currentTick, checkpoint, setPlaying, setCurrentTick]);
 
   // 先頭に戻る
   const handleRewind = useCallback(() => {
@@ -126,6 +154,17 @@ export const Toolbar: React.FC = () => {
     }
     setCurrentTick(0);
   }, [isPlaying, setPlaying, setCurrentTick]);
+
+  // 新規作成
+  const handleNewProject = useCallback(() => {
+    if (notes.length === 0) {
+      resetProject();
+      return;
+    }
+    if (window.confirm('現在のプロジェクトを破棄して新規作成しますか？\n（この操作は元に戻せません）')) {
+      resetProject();
+    }
+  }, [notes.length, resetProject]);
 
   // クリア
   const handleClear = useCallback(() => {
@@ -176,19 +215,21 @@ export const Toolbar: React.FC = () => {
           
           {/* 再生/停止 */}
           <button
-            onClick={handlePlayStop}
-            aria-label={isPlaying ? '停止' : '再生'}
+            onClick={() => handlePlayStop(isShiftPressed && checkpoint !== null)}
+            aria-label={isPlaying ? '停止' : (isShiftPressed && checkpoint !== null ? 'チェックポイントから再生' : '再生')}
             className={`
               flex items-center justify-center gap-2.5 min-w-[100px] px-6 py-2.5 rounded-lg text-sm font-bold
               transition-all duration-200 shadow-md active:scale-[0.98]
               ${isPlaying 
                 ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white hover:from-rose-600 hover:to-pink-600 shadow-rose-500/25' 
-                : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600 shadow-emerald-500/25'
+                : (isShiftPressed && checkpoint !== null
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600 shadow-amber-500/25'
+                    : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600 shadow-emerald-500/25')
               }
             `}
           >
             {isPlaying ? <StopIcon /> : <PlayIcon />}
-            <span>{isPlaying ? '停止' : '再生'}</span>
+            <span>{isPlaying ? '停止' : (isShiftPressed && checkpoint !== null ? 'CP再生' : '再生')}</span>
           </button>
         </div>
 
@@ -249,12 +290,12 @@ export const Toolbar: React.FC = () => {
                     ? `0 4px 12px -2px ${instrument.color}50` 
                     : undefined,
                 }}
-                title={`${instrument.nameJa} (${instrument.symbol})`}
+                title={`${instrument.nameJa} (${instrument.symbol})${instrument.octaveOffset !== 0 ? ` [${instrument.octaveOffset > 0 ? '+' : ''}${instrument.octaveOffset}oct]` : ''}`}
               >
                 {instrument.symbol}
                 {/* Tooltip */}
                 <span className="absolute -bottom-10 left-1/2 transform -translate-x-1/2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-slate-700 shadow-xl z-[100]" aria-hidden="true">
-                  {instrument.nameJa}
+                  {instrument.nameJa}{instrument.octaveOffset !== 0 && <span className="ml-1 text-yellow-400">{instrument.octaveOffset > 0 ? '+' : ''}{instrument.octaveOffset}oct</span>}
                 </span>
               </button>
             ))}
@@ -325,11 +366,20 @@ export const Toolbar: React.FC = () => {
           </div>
         </div>
 
-        {/* クリア */}
-        <div className="ml-auto flex items-center pl-4 border-l border-slate-600/40 flex-shrink-0">
+        {/* 新規・クリア */}
+        <div className="ml-auto flex items-center gap-2 pl-4 border-l border-slate-600/40 flex-shrink-0">
+          <button
+            onClick={handleNewProject}
+            className="flex items-center gap-2 px-4 py-2 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg text-xs font-medium transition-all border border-slate-600/50 hover:border-emerald-500/30"
+            title="新規プロジェクト"
+          >
+            <NewIcon />
+            <span>New</span>
+          </button>
           <button
             onClick={handleClear}
             className="flex items-center gap-2 px-4 py-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg text-xs font-medium transition-all border border-slate-600/50 hover:border-rose-500/30"
+            title="全ての音符を削除"
           >
             <ClearIcon />
             <span>Clear All</span>

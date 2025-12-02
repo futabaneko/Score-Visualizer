@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Note, EditorSettings, PlaybackState, Layer, Selection } from '../types';
-import { DEFAULT_BPM, DEFAULT_ZOOM, DEFAULT_GRID_SIZE } from '../constants';
+import { DEFAULT_BPM, DEFAULT_ZOOM, DEFAULT_GRID_SIZE, INSTRUMENTS, PITCHES } from '../constants';
 import { generateId } from '../utils/scoreParser';
 
 // ローカルストレージのキー
@@ -49,8 +49,11 @@ interface ScoreState {
   history: { notes: Note[]; layers: Layer[] }[];
   historyIndex: number;
   
+  // チェックポイント（一つだけ）
+  checkpoint: number | null;
+  
   // 音符アクション
-  addNote: (tick: number, pitch: number, instrument: string) => void;
+  addNote: (tick: number, pitch: number, instrument: string) => { success: boolean; error?: string };
   removeNote: (noteId: string) => void;
   removeNotesAt: (tick: number, pitch: number) => void;
   clearNotes: () => void;
@@ -96,6 +99,13 @@ interface ScoreState {
   undo: () => void;
   redo: () => void;
   saveToHistory: () => void;
+  
+  // チェックポイント
+  setCheckpoint: (tick: number | null) => void;
+  toggleCheckpoint: (tick: number) => void;
+  
+  // プロジェクト管理
+  resetProject: () => void;
 }
 
 // デフォルトレイヤーを作成
@@ -128,6 +138,7 @@ const loadFromLocalStorage = (): {
   bpm: number;
   totalTicks: number;
   activeLayerId: string;
+  checkpoint: number | null;
 } | null => {
   try {
     const saved = localStorage.getItem(AUTOSAVE_KEY);
@@ -149,6 +160,7 @@ const loadFromLocalStorage = (): {
       bpm: data.bpm || DEFAULT_BPM,
       totalTicks: data.totalTicks || 200,
       activeLayerId: data.activeLayerId || data.layers.find((l: Layer) => !l.isGlobal)?.id,
+      checkpoint: data.checkpoint ?? null,
     };
   } catch (error) {
     console.warn('Failed to load autosave:', error);
@@ -164,6 +176,7 @@ const saveToLocalStorage = (state: {
   bpm: number;
   totalTicks: number;
   activeLayerId: string;
+  checkpoint: number | null;
 }) => {
   try {
     const data = {
@@ -173,6 +186,7 @@ const saveToLocalStorage = (state: {
       bpm: state.bpm,
       totalTicks: state.totalTicks,
       activeLayerId: state.activeLayerId,
+      checkpoint: state.checkpoint,
       savedAt: new Date().toISOString(),
     };
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(data));
@@ -192,6 +206,7 @@ const initialActiveLayerId = savedState?.activeLayerId || defaultLayer.id;
 const initialProjectName = savedState?.projectName || '新規プロジェクト';
 const initialBpm = savedState?.bpm || DEFAULT_BPM;
 const initialTotalTicks = savedState?.totalTicks || 200;
+const initialCheckpoint = savedState?.checkpoint ?? null;
 
 export const useScoreStore = create<ScoreState>((set, get) => ({
   notes: initialNotes,
@@ -224,12 +239,25 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   history: [{ notes: [], layers: [globalLayer, defaultLayer] }],
   historyIndex: 0,
   
+  checkpoint: initialCheckpoint,
+  
   addNote: (tick, pitch, instrument) => {
     const { notes, activeLayerId, layers, saveToHistory } = get();
     
     // 全体レイヤーには追加不可
     const activeLayer = layers.find(l => l.id === activeLayerId);
-    if (activeLayer?.isGlobal || activeLayer?.locked) return;
+    if (activeLayer?.isGlobal || activeLayer?.locked) {
+      return { success: false, error: 'このレイヤーには追加できません' };
+    }
+    
+    // 通常ピッチ範囲（0〜24）のチェック
+    if (pitch < 0 || pitch >= PITCHES.length) {
+      const instrumentData = INSTRUMENTS.find(i => i.id === instrument);
+      return { 
+        success: false, 
+        error: `${instrumentData?.nameJa || instrument}はこの位置に置けません（ピッチ範囲外）` 
+      };
+    }
     
     // 同じ位置・同じ楽器・同じレイヤーの音符がある場合のみ追加を防止
     // （異なる楽器なら同一tick・同一pitchに配置可能）
@@ -247,7 +275,10 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
         layerId: activeLayerId,
       };
       set({ notes: [...notes, newNote] });
+      return { success: true };
     }
+    
+    return { success: false, error: '同じ音符が既に存在します' };
   },
   
   removeNote: (noteId) => {
@@ -613,6 +644,51 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       });
     }
   },
+  
+  // チェックポイント
+  setCheckpoint: (tick) => {
+    set({ checkpoint: tick });
+  },
+  
+  toggleCheckpoint: (tick) => {
+    const { checkpoint } = get();
+    if (checkpoint === tick) {
+      // 同じ位置ならクリア
+      set({ checkpoint: null });
+    } else {
+      // 新しい位置に設定（既存のチェックポイントは上書き）
+      set({ checkpoint: tick });
+    }
+  },
+  
+  // プロジェクトをリセット（新規作成）
+  resetProject: () => {
+    const newGlobalLayer = createGlobalLayer();
+    const newDefaultLayer = createDefaultLayer();
+    
+    set({
+      notes: [],
+      layers: [newGlobalLayer, newDefaultLayer],
+      activeLayerId: newDefaultLayer.id,
+      projectName: '新規プロジェクト',
+      bpm: DEFAULT_BPM,
+      totalTicks: 200,
+      selectedNotes: new Set(),
+      selection: null,
+      clipboard: [],
+      history: [{ notes: [], layers: [newGlobalLayer, newDefaultLayer] }],
+      historyIndex: 0,
+      checkpoint: null,
+      playback: {
+        isPlaying: false,
+        currentTick: 0,
+        autoScrollEnabled: true,
+      },
+    });
+    
+    // ローカルストレージもクリア
+    localStorage.removeItem(AUTOSAVE_KEY);
+  },
 }));
 
 // 自動保存：5秒ごとに変更をローカルストレージに保存
@@ -632,6 +708,7 @@ useScoreStore.subscribe((state) => {
       bpm: state.bpm,
       totalTicks: state.totalTicks,
       activeLayerId: state.activeLayerId,
+      checkpoint: state.checkpoint,
     });
   }, AUTOSAVE_INTERVAL);
 });
@@ -647,6 +724,7 @@ if (typeof window !== 'undefined') {
       bpm: state.bpm,
       totalTicks: state.totalTicks,
       activeLayerId: state.activeLayerId,
+      checkpoint: state.checkpoint,
     });
   });
 }

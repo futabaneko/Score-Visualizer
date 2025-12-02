@@ -140,7 +140,7 @@ export const PITCH_VALUES: Readonly<Record<PitchLetter, number>> = {
   Y: 2.0,
 } as const;
 
-// 音符名（表示用）
+// 音符名（表示用）- F# から +F# までの25音（通常範囲）
 export const NOTE_NAMES = [
   'F#',
   'G',
@@ -154,19 +154,19 @@ export const NOTE_NAMES = [
   'D#',
   'E',
   'F',
-  'F#',
-  'G',
-  'G#',
-  'A',
-  'A#',
-  'B',
-  'C',
-  'C#',
-  'D',
-  'D#',
-  'E',
-  'F',
-  'F#',
+  '+F#',
+  '+G',
+  '+G#',
+  '+A',
+  '+A#',
+  '+B',
+  '+C',
+  '+C#',
+  '+D',
+  '+D#',
+  '+E',
+  '+F',
+  '+F#',
 ];
 
 // デフォルトのグリッドサイズ

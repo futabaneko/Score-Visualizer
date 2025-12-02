@@ -26,26 +26,52 @@ const VIRTUALIZATION_BUFFER = 5; // tick数
 const INSTRUMENT_MAP = new Map(INSTRUMENTS.map((inst) => [inst.id, inst]));
 
 // 全体レイヤー用の拡張ピッチ（5オクターブ分: -2オクターブ ~ +2オクターブ）
-// 通常の25音(F#~F#)を中心に、上下2オクターブ(各24音)ずつ追加
+// 通常の25音(F#~+F#)を中心に、上下2オクターブ(各24音)ずつ追加
 const EXTENDED_PITCHES_COUNT = 25 + 24 + 24; // 73音
 
-// 拡張ピッチの音符名を生成（---F#から++F#まで）
+// 拡張ピッチの音符名を生成（--F#から++++F#まで）
+// オクターブの区切りはF#
+// --F# → -F# → F# → +F# → ++F# → +++F# → ++++F#
 const generateExtendedNoteNames = (): string[] => {
   const baseNotes = ['F#', 'G', 'G#', 'A', 'A#', 'B', 'C', 'C#', 'D', 'D#', 'E', 'F'];
   const result: string[] = [];
   
-  // --オクターブ (24音: F#からF)
-  for (let i = 0; i < 24; i++) {
-    result.push('--' + baseNotes[i % 12]);
+  // 73音を下から順に生成
+  // displayPitch 0 = 最下位の --F#
+  // displayPitch 72 = 最上位の ++++F#
+  
+  // --オクターブ (12音: --F#から--F)
+  for (let i = 0; i < 12; i++) {
+    result.push('--' + baseNotes[i]);
   }
   
-  // 通常範囲 (25音: F#からF#) - NOTE_NAMESと同じ
-  result.push(...NOTE_NAMES);
-  
-  // ++オクターブ (24音: GからF#)
-  for (let i = 1; i < 25; i++) {
-    result.push('++' + baseNotes[i % 12]);
+  // -オクターブ (12音: -F#から-F)
+  for (let i = 0; i < 12; i++) {
+    result.push('-' + baseNotes[i]);
   }
+  
+  // 通常オクターブ (12音: F#からF)
+  for (let i = 0; i < 12; i++) {
+    result.push(baseNotes[i]);
+  }
+  
+  // +オクターブ (12音: +F#から+F)
+  for (let i = 0; i < 12; i++) {
+    result.push('+' + baseNotes[i]);
+  }
+  
+  // ++オクターブ (12音: ++F#から++F)
+  for (let i = 0; i < 12; i++) {
+    result.push('++' + baseNotes[i]);
+  }
+  
+  // +++オクターブ (12音: +++F#から+++F)
+  for (let i = 0; i < 12; i++) {
+    result.push('+++' + baseNotes[i]);
+  }
+  
+  // ++++F#（最上位の1音）
+  result.push('++++F#');
   
   return result;
 };
@@ -122,7 +148,7 @@ const NoteLayer = React.memo(({
             {groupNotes.map(({ note, displayPitch }, index: number) => {
               const isSelected = selectedNotes.has(note.id);
               const instrument = INSTRUMENT_MAP.get(note.instrument);
-              const hasOctaveOffset = isGlobalLayerActive && instrument?.octaveOffset && instrument.octaveOffset !== 0;
+              const hasOctaveOffset = instrument?.octaveOffset && instrument.octaveOffset !== 0;
               
               // 複数ノートの場合、少しずつオフセット
               const offsetX = hasMultiple ? index * 2 : 0;
@@ -228,6 +254,7 @@ export const PianoRoll: React.FC = () => {
     totalTicks,
     selection,
     clipboard,
+    checkpoint,
     addNote,
     removeNotesAt,
     removeNote,
@@ -237,7 +264,12 @@ export const PianoRoll: React.FC = () => {
     copySelected,
     paste,
     cut,
+    setCurrentTick,
+    toggleCheckpoint,
   } = useScoreStore();
+
+  // エラーメッセージの状態
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const { zoom, selectedInstrument, snapToGrid, gridSize } = settings;
   const { isPlaying, currentTick } = playback;
@@ -245,9 +277,13 @@ export const PianoRoll: React.FC = () => {
   // アクティブレイヤーが全体レイヤーかどうか
   const isGlobalLayerActive = activeLayerId === 'global-layer';
 
-  // 全体レイヤー時は拡張ピッチを使用
-  const currentPitchCount = isGlobalLayerActive ? EXTENDED_PITCHES_COUNT : PITCHES.length;
-  const currentNoteNames = isGlobalLayerActive ? EXTENDED_NOTE_NAMES : NOTE_NAMES;
+  // 常に拡張ピッチを使用（全レイヤーでオクターブオフセット対応）
+  const currentPitchCount = EXTENDED_PITCHES_COUNT;
+  const currentNoteNames = EXTENDED_NOTE_NAMES;
+
+  // 選択中の楽器のオクターブオフセットを取得
+  const selectedInstrumentData = INSTRUMENTS.find(i => i.id === selectedInstrument);
+  const selectedOctaveOffset = selectedInstrumentData?.octaveOffset || 0;
 
   const cellWidth = CELL_WIDTH * zoom;
   const cellHeight = CELL_HEIGHT;
@@ -293,23 +329,21 @@ export const PianoRoll: React.FC = () => {
     return { min: minDisplayPitch, max: maxDisplayPitch };
   }, [viewportState.scrollTop, viewportState.clientHeight, cellHeight, currentPitchCount]);
 
-  // 同じ位置のノートをグループ化（全体レイヤー時はオクターブオフセットを考慮）
+  // 同じ位置のノートをグループ化（常に拡張ピッチ座標系、オクターブオフセット考慮）
   const groupedNotes = useMemo(() => {
     const visibleNotes = notes.filter(note => visibleLayerIds.has(note.layerId));
     const groups = new Map<string, { note: typeof notes[0]; displayPitch: number }[]>();
     
     for (const note of visibleNotes) {
-      // 全体レイヤー表示時はオクターブオフセットを適用し、拡張ピッチ座標に変換
-      let displayPitch = note.pitch;
-      if (isGlobalLayerActive) {
-        const instrument = INSTRUMENT_MAP.get(note.instrument);
-        const octaveOffset = instrument?.octaveOffset || 0;
-        // 拡張ピッチ座標系に変換（通常ピッチ0は拡張ピッチのNORMAL_PITCH_OFFSET位置）
-        displayPitch = note.pitch + NORMAL_PITCH_OFFSET + (octaveOffset * 12);
-        // 範囲外チェック
-        if (displayPitch < 0 || displayPitch >= EXTENDED_PITCHES_COUNT) {
-          continue; // 表示範囲外はスキップ
-        }
+      const instrument = INSTRUMENT_MAP.get(note.instrument);
+      const octaveOffset = instrument?.octaveOffset || 0;
+      
+      // 常に拡張ピッチ座標系に変換
+      const displayPitch = note.pitch + NORMAL_PITCH_OFFSET + (octaveOffset * 12);
+      
+      // 範囲外チェック
+      if (displayPitch < 0 || displayPitch >= EXTENDED_PITCHES_COUNT) {
+        continue; // 表示範囲外はスキップ
       }
       
       const key = `${note.tick}-${displayPitch}`;
@@ -320,7 +354,7 @@ export const PianoRoll: React.FC = () => {
     }
     
     return groups;
-  }, [notes, visibleLayerIds, isGlobalLayerActive]);
+  }, [notes, visibleLayerIds]);
 
   // グリッドへのスナップ（useCallbackでメモ化）
   const snapToGridValue = useCallback((tick: number): number => {
@@ -330,7 +364,7 @@ export const PianoRoll: React.FC = () => {
 
   // マウス位置から座標を計算
   const getPositionFromEvent = useCallback(
-    (e: React.MouseEvent): { tick: number; pitch: number } | null => {
+    (e: React.MouseEvent): { tick: number; pitch: number; displayPitch: number } | null => {
       if (!containerRef.current) return null;
 
       const rect = containerRef.current.getBoundingClientRect();
@@ -346,25 +380,20 @@ export const PianoRoll: React.FC = () => {
       const rawTick = Math.floor(x / cellWidth);
       const tick = snapToGridValue(rawTick);
       
-      // 全体レイヤー時は拡張ピッチを使用
-      const pitchCount = isGlobalLayerActive ? EXTENDED_PITCHES_COUNT : PITCHES.length;
-      const rawPitch = pitchCount - 1 - Math.floor(y / cellHeight);
+      // 常に拡張ピッチを使用
+      const displayPitch = EXTENDED_PITCHES_COUNT - 1 - Math.floor(y / cellHeight);
       
-      // 全体レイヤー時は拡張ピッチから通常ピッチに変換
-      let pitch = rawPitch;
-      if (isGlobalLayerActive) {
-        pitch = rawPitch - NORMAL_PITCH_OFFSET;
-      }
+      // 拡張ピッチから通常ピッチに変換（オクターブオフセットを考慮）
+      // displayPitch = pitch + NORMAL_PITCH_OFFSET + (octaveOffset * 12)
+      // よって: pitch = displayPitch - NORMAL_PITCH_OFFSET - (octaveOffset * 12)
+      const pitch = displayPitch - NORMAL_PITCH_OFFSET - (selectedOctaveOffset * 12);
 
-      if (rawPitch < 0 || rawPitch >= pitchCount) return null;
+      if (displayPitch < 0 || displayPitch >= EXTENDED_PITCHES_COUNT) return null;
       if (tick < 0 || tick >= totalTicks) return null;
-      
-      // 通常レイヤーでは通常のピッチ範囲内のみ
-      if (!isGlobalLayerActive && (pitch < 0 || pitch >= PITCHES.length)) return null;
 
-      return { tick, pitch };
+      return { tick, pitch, displayPitch };
     },
-    [cellWidth, snapToGridValue, totalTicks, isGlobalLayerActive]
+    [cellWidth, snapToGridValue, totalTicks, selectedOctaveOffset]
   );
 
   // マウスダウン処理
@@ -394,17 +423,24 @@ export const PianoRoll: React.FC = () => {
         if (!isGlobalLayerActive) {
           setDragMode('erase');
           setDragStart(pos);
-          removeNotesAt(pos.tick, pos.pitch);
+          // pitchが有効範囲内の場合のみ削除
+          if (pos.pitch >= 0 && pos.pitch < PITCHES.length) {
+            removeNotesAt(pos.tick, pos.pitch);
+          }
         }
         return;
       }
 
       // 左クリック
       if (e.button === 0) {
-        // このセルにある音符を取得
-        const notesAtCell = notes.filter(
-          (n) => n.tick === pos.tick && n.pitch === pos.pitch && visibleLayerIds.has(n.layerId)
-        );
+        // このセルにある音符を取得（displayPitchベースで検索）
+        const notesAtCell = notes.filter((n) => {
+          if (!visibleLayerIds.has(n.layerId)) return false;
+          const inst = INSTRUMENT_MAP.get(n.instrument);
+          const offset = inst?.octaveOffset || 0;
+          const noteDisplayPitch = n.pitch + NORMAL_PITCH_OFFSET + (offset * 12);
+          return n.tick === pos.tick && noteDisplayPitch === pos.displayPitch;
+        });
         
         if (notesAtCell.length > 0) {
           // 音符がある場合はポップアップを表示
@@ -420,15 +456,28 @@ export const PianoRoll: React.FC = () => {
             })),
           });
         } else if (!isGlobalLayerActive) {
-          // 音符がなければ新規追加
+          // 音符がなければ新規追加（pitchが有効範囲内の場合のみ）
           setCellPopup(null);
           deselectAll();
-          addNote(pos.tick, pos.pitch, selectedInstrument);
-          playNote(selectedInstrument, pos.pitch);
+          
+          // pitchが有効範囲（0〜24）外ならエラー
+          if (pos.pitch < 0 || pos.pitch >= PITCHES.length) {
+            setErrorMessage(`${selectedInstrumentData?.nameJa || selectedInstrument}はこの位置に置けません（ピッチ範囲外）`);
+            setTimeout(() => setErrorMessage(null), 3000);
+            return;
+          }
+          
+          const result = addNote(pos.tick, pos.pitch, selectedInstrument);
+          if (result.success) {
+            playNote(selectedInstrument, pos.pitch);
+          } else if (result.error) {
+            setErrorMessage(result.error);
+            setTimeout(() => setErrorMessage(null), 3000);
+          }
         }
       }
     },
-    [getPositionFromEvent, notes, selectedInstrument, addNote, removeNotesAt, deselectAll, visibleLayerIds, isGlobalLayerActive, cellPopup]
+    [getPositionFromEvent, notes, selectedInstrument, selectedInstrumentData, addNote, removeNotesAt, deselectAll, visibleLayerIds, isGlobalLayerActive, cellPopup]
   );
 
   // マウス移動処理
@@ -468,12 +517,16 @@ export const PianoRoll: React.FC = () => {
     e.preventDefault();
   }, []);
 
-  // Ctrl+ホイールで横スクロール
+  // Ctrl+ホイールで横スクロール、通常ホイールで縦スクロール
   const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (e.ctrlKey && containerRef.current) {
+    if (!containerRef.current) return;
+    
+    if (e.ctrlKey) {
       e.preventDefault();
       containerRef.current.scrollLeft += e.deltaY;
     }
+    // 通常のホイール操作は縦スクロール（再生中も許可）
+    // ブラウザのデフォルト動作に任せる
   }, []);
 
   // スクロールイベントでビューポートを更新（仮想化用）
@@ -578,7 +631,7 @@ export const PianoRoll: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [copySelected, paste, cut, deselectAll]);
 
-  // 選択範囲の描画用座標を計算
+  // 選択範囲の描画用座標を計算（常に拡張ピッチ座標系）
   const getSelectionRect = () => {
     const start = dragStart;
     const end = dragEnd;
@@ -590,11 +643,15 @@ export const PianoRoll: React.FC = () => {
     const minPitch = Math.min(start.pitch, end.pitch);
     const maxPitch = Math.max(start.pitch, end.pitch);
 
+    // 拡張ピッチ座標に変換
+    const displayMinPitch = minPitch + NORMAL_PITCH_OFFSET + (selectedOctaveOffset * 12);
+    const displayMaxPitch = maxPitch + NORMAL_PITCH_OFFSET + (selectedOctaveOffset * 12);
+
     return {
       left: PLAYBACK_LEFT_BUFFER + minTick * cellWidth,
-      top: (PITCHES.length - 1 - maxPitch) * cellHeight,
+      top: (EXTENDED_PITCHES_COUNT - 1 - displayMaxPitch) * cellHeight,
       width: (maxTick - minTick + 1) * cellWidth,
-      height: (maxPitch - minPitch + 1) * cellHeight,
+      height: (displayMaxPitch - displayMinPitch + 1) * cellHeight,
     };
   };
 
@@ -607,9 +664,9 @@ export const PianoRoll: React.FC = () => {
     const minPitch = Math.min(selection.startPitch, selection.endPitch);
     const maxPitch = Math.max(selection.startPitch, selection.endPitch);
 
-    // 全体レイヤー時は拡張ピッチ座標に変換
-    const displayMinPitch = isGlobalLayerActive ? minPitch + NORMAL_PITCH_OFFSET : minPitch;
-    const displayMaxPitch = isGlobalLayerActive ? maxPitch + NORMAL_PITCH_OFFSET : maxPitch;
+    // 常に拡張ピッチ座標に変換
+    const displayMinPitch = minPitch + NORMAL_PITCH_OFFSET;
+    const displayMaxPitch = maxPitch + NORMAL_PITCH_OFFSET;
 
     return {
       left: PLAYBACK_LEFT_BUFFER + minTick * cellWidth,
@@ -625,9 +682,9 @@ export const PianoRoll: React.FC = () => {
   // セル番号ヘッダーの表示間隔を計算
   const headerTickInterval = gridSize >= 4 ? gridSize : 4;
 
-  // 全体レイヤー切替時に通常範囲が見える位置にスクロール
+  // 初期表示時と全体レイヤー切替時に通常範囲が見える位置にスクロール
   useEffect(() => {
-    if (isGlobalLayerActive && containerRef.current) {
+    if (containerRef.current) {
       // 通常範囲の中央付近にスクロール（上に24音分 + ヘッダー分）
       // 画面の中央に通常範囲の中央が来るように調整
       const containerHeight = containerRef.current.clientHeight;
@@ -643,7 +700,7 @@ export const PianoRoll: React.FC = () => {
         }
       });
     }
-  }, [isGlobalLayerActive, cellHeight]);
+  }, [cellHeight]); // 初期マウント時のみ実行（cellHeightが変わることはほぼない）
 
   // 再生中の自動横スクロール（再生位置を常に画面左寄りに固定）
   useEffect(() => {
@@ -685,10 +742,17 @@ export const PianoRoll: React.FC = () => {
         {/* 全体レイヤー表示中の注意書き（スティッキー） */}
         {isGlobalLayerActive && (
           <div className="fixed top-[60px] right-4 z-50 bg-amber-900/90 text-amber-300 text-xs px-3 py-1.5 rounded-lg border border-amber-700/50 backdrop-blur-sm shadow-lg">
-            🌐 全体表示モード（編集不可・オクターブオフセット適用）
+            🌐 全体表示モード（編集不可）
           </div>
         )}
         
+        {/* エラーメッセージ表示 */}
+        {errorMessage && (
+          <div className="fixed top-[60px] left-1/2 transform -translate-x-1/2 z-50 bg-red-900/90 text-red-300 text-sm px-4 py-2 rounded-lg border border-red-700/50 backdrop-blur-sm shadow-lg animate-pulse">
+            ⚠️ {errorMessage}
+          </div>
+        )}
+
         {/* セル番号ヘッダー（スティッキー） */}
         <div 
           className="sticky top-0 z-40 flex bg-slate-800 border-b border-slate-700"
@@ -702,8 +766,25 @@ export const PianoRoll: React.FC = () => {
             <span className="text-[10px] text-slate-500">Tick</span>
           </div>
           
-          {/* セル番号 */}
-          <div className="relative" style={{ width: gridWidth }}>
+          {/* セル番号（クリックで再生位置を移動、Shiftクリックでチェックポイント） */}
+          <div 
+            className={`relative ${!isPlaying ? 'cursor-pointer hover:bg-slate-700/30' : ''}`}
+            style={{ width: gridWidth }}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              const x = e.clientX - rect.left;
+              const clickedTick = Math.floor((x - PLAYBACK_LEFT_BUFFER) / cellWidth);
+              if (clickedTick >= 0 && clickedTick < totalTicks) {
+                if (e.shiftKey) {
+                  // Shiftクリックでチェックポイントを設定/解除
+                  toggleCheckpoint(clickedTick);
+                } else if (!isPlaying) {
+                  // 通常クリックで再生位置を移動（停止中のみ）
+                  setCurrentTick(clickedTick);
+                }
+              }
+            }}
+          >
             {Array.from({ length: Math.ceil(totalTicks / headerTickInterval) + 1 }).map((_, index) => {
               const tick = index * headerTickInterval;
               if (tick >= totalTicks) return null;
@@ -711,7 +792,7 @@ export const PianoRoll: React.FC = () => {
               return (
                 <div
                   key={tick}
-                  className="absolute top-0 h-full flex items-center text-[10px] text-slate-400 font-mono"
+                  className="absolute top-0 h-full flex items-center text-[10px] text-slate-400 font-mono pointer-events-none"
                   style={{ 
                     left: PLAYBACK_LEFT_BUFFER + tick * cellWidth,
                     width: headerTickInterval * cellWidth,
@@ -721,6 +802,27 @@ export const PianoRoll: React.FC = () => {
                 </div>
               );
             })}
+            {/* チェックポイントマーカー（ヘッダー内） */}
+            {checkpoint !== null && (
+              <div
+                className="absolute top-0 bottom-0 w-1 bg-amber-500 cursor-pointer z-10 hover:bg-amber-400"
+                style={{ left: PLAYBACK_LEFT_BUFFER + checkpoint * cellWidth - 2 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleCheckpoint(checkpoint);
+                }}
+                title="チェックポイント（クリックで削除）"
+              >
+                <div className="absolute -top-0.5 left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] border-l-transparent border-r-transparent border-t-amber-500" />
+              </div>
+            )}
+            {/* 停止中の再生位置インジケータ（ヘッダー内） */}
+            {!isPlaying && currentTick > 0 && (
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-rose-500/70 pointer-events-none"
+                style={{ left: PLAYBACK_LEFT_BUFFER + currentTick * cellWidth }}
+              />
+            )}
           </div>
         </div>
 
@@ -735,17 +837,20 @@ export const PianoRoll: React.FC = () => {
               const noteName = currentNoteNames[noteIndex];
               const isBlackKey = noteName.includes('#');
               
-              // 通常範囲（オフセット0）かどうかを判定
-              const isNormalRange = isGlobalLayerActive 
-                ? (noteIndex >= NORMAL_PITCH_OFFSET && noteIndex < NORMAL_PITCH_OFFSET + PITCHES.length)
-                : true;
+              // 通常範囲（オフセット0の楽器で配置できる範囲）かどうかを判定
+              const isNormalRange = noteIndex >= NORMAL_PITCH_OFFSET && noteIndex < NORMAL_PITCH_OFFSET + PITCHES.length;
               
-              // 全体レイヤー時、実際のピッチ値（通常レイヤー用）を計算
-              const actualPitch = isGlobalLayerActive ? noteIndex - NORMAL_PITCH_OFFSET : noteIndex;
+              // 実際のピッチ値（通常レイヤー用）を計算
+              const actualPitch = noteIndex - NORMAL_PITCH_OFFSET;
+              
+              // 選択中の楽器のオフセットを考慮した有効範囲かどうか
+              const isInSelectedInstrumentRange = 
+                (actualPitch - selectedOctaveOffset * 12) >= 0 && 
+                (actualPitch - selectedOctaveOffset * 12) < PITCHES.length;
               
               // オクターブ範囲の背景色を変更
               let bgClass = isBlackKey ? 'bg-slate-900 text-slate-500' : 'bg-slate-800 text-slate-300';
-              if (isGlobalLayerActive && !isNormalRange) {
+              if (!isNormalRange) {
                 bgClass = isBlackKey ? 'bg-slate-950/80 text-slate-600' : 'bg-slate-900/50 text-slate-500';
               }
 
@@ -759,7 +864,11 @@ export const PianoRoll: React.FC = () => {
                     ${!isNormalRange ? 'opacity-60' : ''}
                     hover:brightness-125 hover:pl-1
                   `}
-                  style={{ height: cellHeight }}
+                  style={{ 
+                    height: cellHeight,
+                    // 選択中の楽器の有効範囲内は左側に黄色いバーを表示
+                    borderLeft: !isGlobalLayerActive && isInSelectedInstrumentRange ? '3px solid #eab308' : 'none',
+                  }}
                   onClick={() => {
                     // 通常範囲内のみ音を鳴らす
                     if (actualPitch >= 0 && actualPitch < PITCHES.length) {
@@ -777,6 +886,27 @@ export const PianoRoll: React.FC = () => {
 
         {/* グリッド領域 */}
         <div className="relative bg-slate-900/50 overflow-hidden" style={{ width: gridWidth, height: gridHeight }}>
+          {/* 黒鍵/白鍵の行背景色 */}
+          {Array.from({ length: currentPitchCount }).map((_, index) => {
+            const noteIndex = currentPitchCount - 1 - index;
+            const noteName = currentNoteNames[noteIndex];
+            const isBlackKey = noteName.includes('#');
+            
+            return (
+              <div
+                key={`row-bg-${index}`}
+                className="absolute pointer-events-none"
+                style={{
+                  left: 0,
+                  top: index * cellHeight,
+                  width: gridWidth,
+                  height: cellHeight,
+                  backgroundColor: isBlackKey ? 'rgba(15, 23, 42, 0.6)' : 'rgba(51, 65, 85, 0.25)',
+                }}
+              />
+            );
+          })}
+          
           {/* グリッド線 */}
           <svg
             className="absolute inset-0 pointer-events-none"
@@ -785,9 +915,43 @@ export const PianoRoll: React.FC = () => {
           >
             {/* 水平線 */}
             {Array.from({ length: currentPitchCount }).map((_, index) => {
-              // 通常範囲の境界線を強調
-              const isNormalBoundary = isGlobalLayerActive && 
-                (index === NORMAL_PITCH_OFFSET || index === NORMAL_PITCH_OFFSET + PITCHES.length);
+              // noteIndex: この線の上にある音のインデックス（下から数えて）
+              const noteIndexAbove = currentPitchCount - 1 - index;
+              
+              // 通常範囲の境界線（青）: pitch 0〜24 が offset=0 で配置できる範囲
+              // 上境界: noteIndex = NORMAL_PITCH_OFFSET + 24 の上 → index = 73-1-48 = 24
+              // 下境界: noteIndex = NORMAL_PITCH_OFFSET - 1 の下 → index = 73-1-23 = 49
+              const normalTopBoundaryIndex = EXTENDED_PITCHES_COUNT - 1 - (NORMAL_PITCH_OFFSET + PITCHES.length - 1);
+              const normalBottomBoundaryIndex = EXTENDED_PITCHES_COUNT - NORMAL_PITCH_OFFSET;
+              const isNormalBoundary = 
+                index === normalTopBoundaryIndex || index === normalBottomBoundaryIndex;
+              
+              // 選択中の楽器の有効範囲境界線（黄色）
+              // displayPitch範囲: (NORMAL_PITCH_OFFSET + offset*12) 〜 (NORMAL_PITCH_OFFSET + offset*12 + 24)
+              // 上境界: displayPitch = NORMAL_PITCH_OFFSET + offset*12 + 24 の上
+              // 下境界: displayPitch = NORMAL_PITCH_OFFSET + offset*12 - 1 の下
+              const instrumentTopDisplayPitch = NORMAL_PITCH_OFFSET + (selectedOctaveOffset * 12) + PITCHES.length - 1;
+              const instrumentBottomDisplayPitch = NORMAL_PITCH_OFFSET + (selectedOctaveOffset * 12);
+              const instrumentTopBoundaryIndex = EXTENDED_PITCHES_COUNT - 1 - instrumentTopDisplayPitch;
+              const instrumentBottomBoundaryIndex = EXTENDED_PITCHES_COUNT - instrumentBottomDisplayPitch;
+              
+              const isInstrumentBoundary = !isGlobalLayerActive && 
+                (index === instrumentTopBoundaryIndex || index === instrumentBottomBoundaryIndex);
+              
+              // 色の決定: 楽器境界 > 通常境界 > 通常線
+              let strokeColor = '#1e293b';
+              let strokeWidth = 1;
+              let strokeOpacity = 0.5;
+              
+              if (isInstrumentBoundary) {
+                strokeColor = '#eab308'; // 黄色
+                strokeWidth = 2;
+                strokeOpacity = 0.8;
+              } else if (isNormalBoundary) {
+                strokeColor = '#3b82f6'; // 青
+                strokeWidth = 2;
+                strokeOpacity = 0.5;
+              }
               
               return (
                 <line
@@ -796,9 +960,9 @@ export const PianoRoll: React.FC = () => {
                   y1={index * cellHeight}
                   x2={gridWidth}
                   y2={index * cellHeight}
-                  stroke={isNormalBoundary ? '#3b82f6' : '#1e293b'}
-                  strokeWidth={isNormalBoundary ? 2 : 1}
-                  strokeOpacity={isNormalBoundary ? 0.5 : 0.5}
+                  stroke={strokeColor}
+                  strokeWidth={strokeWidth}
+                  strokeOpacity={strokeOpacity}
                 />
               );
             })}
@@ -821,18 +985,26 @@ export const PianoRoll: React.FC = () => {
             })}
           </svg>
 
-          {/* 再生位置インジケータ（GPU高速化 + 120fps対応） */}
-          {isPlaying && (
+          {/* チェックポイントライン（グリッド内） */}
+          {checkpoint !== null && (
             <div
-              className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-30 pointer-events-none shadow-[0_0_8px_rgba(244,63,94,0.8)]"
+              className="absolute top-0 bottom-0 w-0.5 bg-amber-500/60 z-20 pointer-events-none"
               style={{ 
-                transform: `translateX(${PLAYBACK_LEFT_BUFFER + currentTick * cellWidth}px)`,
-                willChange: 'transform',
+                transform: `translateX(${PLAYBACK_LEFT_BUFFER + checkpoint * cellWidth}px)`,
               }}
-            >
-              <div className="absolute -top-1 -left-1.5 w-3.5 h-3.5 bg-rose-500 rounded-full shadow-sm" />
-            </div>
+            />
           )}
+
+          {/* 再生位置インジケータ（GPU高速化 + 120fps対応） */}
+          <div
+            className={`absolute top-0 bottom-0 w-0.5 z-30 pointer-events-none ${isPlaying ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]' : 'bg-rose-500/50'}`}
+            style={{ 
+              transform: `translateX(${PLAYBACK_LEFT_BUFFER + currentTick * cellWidth}px)`,
+              willChange: 'transform',
+            }}
+          >
+            <div className={`absolute -top-1 -left-1.5 w-3.5 h-3.5 rounded-full shadow-sm ${isPlaying ? 'bg-rose-500' : 'bg-rose-500/50'}`} />
+          </div>
 
           {/* 確定した選択範囲 */}
           {confirmedSelectionRect && (
@@ -988,8 +1160,13 @@ export const PianoRoll: React.FC = () => {
                         // ポップアップを先に閉じる
                         closeCellPopup();
                         // 音符を追加して音を鳴らす
-                        addNote(tick, pitch, selectedInstrument);
-                        playNote(selectedInstrument, pitch);
+                        const result = addNote(tick, pitch, selectedInstrument);
+                        if (result.success) {
+                          playNote(selectedInstrument, pitch);
+                        } else if (result.error) {
+                          setErrorMessage(result.error);
+                          setTimeout(() => setErrorMessage(null), 3000);
+                        }
                       }}
                       className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition-colors"
                     >
