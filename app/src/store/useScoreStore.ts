@@ -3,6 +3,28 @@ import type { Note, EditorSettings, PlaybackState, Layer, Selection } from '../t
 import { DEFAULT_BPM, DEFAULT_ZOOM, DEFAULT_GRID_SIZE, INSTRUMENTS, PITCHES } from '../constants';
 import { generateId } from '../utils/scoreParser';
 
+// 拡張ピッチ表示時のオフセット（通常ピッチ0が拡張ピッチの何番目か）
+const NORMAL_PITCH_OFFSET = 24;
+
+// 楽器ごとのオクターブオフセットマップ（displayPitch計算用）
+const INSTRUMENT_OCTAVE_OFFSETS = new Map(INSTRUMENTS.map(i => [i.id, i.octaveOffset || 0]));
+
+/**
+ * 音符のdisplayPitch（画面上の表示位置）を計算
+ */
+function calcDisplayPitch(pitch: number, instrumentId: string): number {
+  const octaveOffset = INSTRUMENT_OCTAVE_OFFSETS.get(instrumentId) || 0;
+  return pitch + NORMAL_PITCH_OFFSET + (octaveOffset * 12);
+}
+
+/**
+ * displayPitchから実際のpitchを計算
+ */
+function calcPitchFromDisplay(displayPitch: number, instrumentId: string): number {
+  const octaveOffset = INSTRUMENT_OCTAVE_OFFSETS.get(instrumentId) || 0;
+  return displayPitch - NORMAL_PITCH_OFFSET - (octaveOffset * 12);
+}
+
 // ローカルストレージのキー
 const AUTOSAVE_KEY = 'score-visualizer-autosave';
 const AUTOSAVE_INTERVAL = 5000; // 5秒ごとに自動保存
@@ -354,19 +376,22 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
     
     const minTick = Math.min(selection.startTick, selection.endTick);
     const maxTick = Math.max(selection.startTick, selection.endTick);
-    const minPitch = Math.min(selection.startPitch, selection.endPitch);
-    const maxPitch = Math.max(selection.startPitch, selection.endPitch);
+    // selection.startPitch/endPitchはdisplayPitch（画面上の位置）
+    const minDisplayPitch = Math.min(selection.startPitch, selection.endPitch);
+    const maxDisplayPitch = Math.max(selection.startPitch, selection.endPitch);
     
     const selectedIds = new Set<string>();
     notes.forEach((note) => {
       // アクティブレイヤーのみ選択対象
       if (note.layerId !== activeLayerId) return;
       
+      const displayPitch = calcDisplayPitch(note.pitch, note.instrument);
+      
       if (
         note.tick >= minTick &&
         note.tick <= maxTick &&
-        note.pitch >= minPitch &&
-        note.pitch <= maxPitch
+        displayPitch >= minDisplayPitch &&
+        displayPitch <= maxDisplayPitch
       ) {
         selectedIds.add(note.id);
       }
@@ -413,21 +438,27 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
     const selectedNotesList = notes.filter(n => selectedNotes.has(n.id) && n.layerId === activeLayerId);
     if (selectedNotesList.length === 0) return;
     
-    // 最小tick・pitchを基準にオフセットを計算
-    const minTick = Math.min(...selectedNotesList.map(n => n.tick));
-    const minPitch = Math.min(...selectedNotesList.map(n => n.pitch));
+    // displayPitchを計算
+    const notesWithDisplayPitch = selectedNotesList.map(n => ({
+      note: n,
+      displayPitch: calcDisplayPitch(n.pitch, n.instrument),
+    }));
     
-    // 相対位置でクリップボードに保存
-    const clipboard = selectedNotesList.map(n => ({
-      ...n,
-      tick: n.tick - minTick,
-      pitch: n.pitch - minPitch,
+    // 最小tick・displayPitchを基準にオフセットを計算
+    const minTick = Math.min(...notesWithDisplayPitch.map(n => n.note.tick));
+    const minDisplayPitch = Math.min(...notesWithDisplayPitch.map(n => n.displayPitch));
+    
+    // displayPitchからの相対位置でクリップボードに保存
+    const clipboard = notesWithDisplayPitch.map(({ note, displayPitch }) => ({
+      ...note,
+      tick: note.tick - minTick,
+      pitch: displayPitch - minDisplayPitch,  // displayPitchの相対位置
     }));
     
     set({ clipboard });
   },
   
-  paste: (tick, pitch) => {
+  paste: (tick, targetDisplayPitch) => {
     const { clipboard, notes, activeLayerId, layers, saveToHistory } = get();
     if (clipboard.length === 0) return;
     
@@ -438,13 +469,20 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
     saveToHistory();
     
     // 新しい位置に音符を配置
-    const newNotes = clipboard.map(n => ({
-      ...n,
-      id: generateId(),
-      tick: n.tick + tick,
-      pitch: n.pitch + pitch,
-      layerId: activeLayerId,
-    }));
+    // clipboard.pitchはdisplayPitchの相対位置なので、
+    // 各音符のオクターブオフセットを考慮して元のpitchに変換
+    const newNotes = clipboard.map(n => {
+      const absoluteDisplayPitch = targetDisplayPitch + n.pitch;
+      const newPitch = calcPitchFromDisplay(absoluteDisplayPitch, n.instrument);
+      
+      return {
+        ...n,
+        id: generateId(),
+        tick: n.tick + tick,
+        pitch: newPitch,
+        layerId: activeLayerId,
+      };
+    });
     
     set({
       notes: [...notes, ...newNotes],

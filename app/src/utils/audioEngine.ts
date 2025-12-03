@@ -199,6 +199,20 @@ export async function playScore(
   let startTime = performance.now();
   let animationFrameId: number | null = null;
   
+  // 裏画面から戻ったときに時間をリセットするためのリスナー
+  let wasHidden = false;
+  const handleVisibilityChange = () => {
+    if (document.hidden) {
+      wasHidden = true;
+    } else if (wasHidden) {
+      // 裏画面から戻ってきたら、現在のtickを基準に時間をリセット
+      // これにより溜まった音符が一気に再生されるのを防ぐ
+      startTime = performance.now() - (lastPlayedTick - startTick) * tickDurationMs;
+      wasHidden = false;
+    }
+  };
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  
   // tick毎のノートをマップに整理（高速検索用）
   const notesByTick = new Map<number, Note[]>();
   for (const note of sortedNotes) {
@@ -256,6 +270,7 @@ export async function playScore(
     if (animationFrameId !== null) {
       cancelAnimationFrame(animationFrameId);
     }
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
   };
 }
 

@@ -218,8 +218,11 @@ NoteLayer.displayName = 'NoteLayer';
 export const PianoRoll: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragMode, setDragMode] = useState<DragMode>('none');
-  const [dragStart, setDragStart] = useState<{ tick: number; pitch: number } | null>(null);
-  const [dragEnd, setDragEnd] = useState<{ tick: number; pitch: number } | null>(null);
+  const [dragStart, setDragStart] = useState<{ tick: number; pitch: number; displayPitch: number } | null>(null);
+  const [dragEnd, setDragEnd] = useState<{ tick: number; pitch: number; displayPitch: number } | null>(null);
+  
+  // マウス位置の追跡（ペースト位置用）
+  const [mousePosition, setMousePosition] = useState<{ tick: number; displayPitch: number } | null>(null);
   
   // 自動スクロール用の状態（将来的にユーザー設定から変更できるようにする予定）
   const autoScrollEnabled = true;
@@ -484,7 +487,13 @@ export const PianoRoll: React.FC = () => {
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
       const pos = getPositionFromEvent(e);
-      if (!pos) return;
+      if (!pos) {
+        setMousePosition(null);
+        return;
+      }
+      
+      // マウス位置を更新（ペースト位置用）
+      setMousePosition({ tick: pos.tick, displayPitch: pos.displayPitch });
 
       if (dragMode === 'select' && dragStart) {
         setDragEnd(pos);
@@ -499,11 +508,12 @@ export const PianoRoll: React.FC = () => {
   // マウスアップ処理
   const handleMouseUp = useCallback(() => {
     if (dragMode === 'select' && dragStart && dragEnd) {
+      // displayPitchベースで選択範囲を渡す（オクターブオフセット対応）
       selectNotesInRange({
         startTick: dragStart.tick,
         endTick: dragEnd.tick,
-        startPitch: dragStart.pitch,
-        endPitch: dragEnd.pitch,
+        startPitch: dragStart.displayPitch,
+        endPitch: dragEnd.displayPitch,
       });
     }
     
@@ -589,17 +599,18 @@ export const PianoRoll: React.FC = () => {
         copySelected();
       }
       
-      // Ctrl+V でペースト（選択範囲の左上にペースト）
+      // Ctrl+V でペースト（マウス位置 → 選択範囲 → 現在の再生位置）
       if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
         e.preventDefault();
-        const { selection } = useScoreStore.getState();
-        if (selection) {
-          const minTick = Math.min(selection.startTick, selection.endTick);
-          const minPitch = Math.min(selection.startPitch, selection.endPitch);
-          paste(minTick, minPitch);
+        const { currentTick } = useScoreStore.getState().playback;
+        
+        // 優先順位: マウス位置 > 選択範囲 > 現在の再生位置
+        if (mousePosition) {
+          // マウスがPianoRoll上にある場合、マウス位置にペースト
+          paste(mousePosition.tick, mousePosition.displayPitch);
         } else {
-          // 選択範囲がない場合は(0, 12)にペースト
-          paste(0, 12);
+          // PianoRoll外の場合は現在の再生位置（tick）、ピッチは中央（displayPitch=36）
+          paste(Math.floor(currentTick), 36);
         }
       }
       
@@ -629,7 +640,12 @@ export const PianoRoll: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [copySelected, paste, cut, deselectAll]);
+  }, [copySelected, paste, cut, deselectAll, mousePosition]);
+
+  // マウスがPianoRollから離れたときにmousePositionをクリア
+  const handleMouseLeave = useCallback(() => {
+    setMousePosition(null);
+  }, []);
 
   // 選択範囲の描画用座標を計算（常に拡張ピッチ座標系）
   const getSelectionRect = () => {
@@ -640,18 +656,15 @@ export const PianoRoll: React.FC = () => {
 
     const minTick = Math.min(start.tick, end.tick);
     const maxTick = Math.max(start.tick, end.tick);
-    const minPitch = Math.min(start.pitch, end.pitch);
-    const maxPitch = Math.max(start.pitch, end.pitch);
-
-    // 拡張ピッチ座標に変換
-    const displayMinPitch = minPitch + NORMAL_PITCH_OFFSET + (selectedOctaveOffset * 12);
-    const displayMaxPitch = maxPitch + NORMAL_PITCH_OFFSET + (selectedOctaveOffset * 12);
+    // displayPitchを直接使用（オクターブオフセット適用済み）
+    const minDisplayPitch = Math.min(start.displayPitch, end.displayPitch);
+    const maxDisplayPitch = Math.max(start.displayPitch, end.displayPitch);
 
     return {
       left: PLAYBACK_LEFT_BUFFER + minTick * cellWidth,
-      top: (EXTENDED_PITCHES_COUNT - 1 - displayMaxPitch) * cellHeight,
+      top: (EXTENDED_PITCHES_COUNT - 1 - maxDisplayPitch) * cellHeight,
       width: (maxTick - minTick + 1) * cellWidth,
-      height: (displayMaxPitch - displayMinPitch + 1) * cellHeight,
+      height: (maxDisplayPitch - minDisplayPitch + 1) * cellHeight,
     };
   };
 
@@ -661,18 +674,15 @@ export const PianoRoll: React.FC = () => {
 
     const minTick = Math.min(selection.startTick, selection.endTick);
     const maxTick = Math.max(selection.startTick, selection.endTick);
-    const minPitch = Math.min(selection.startPitch, selection.endPitch);
-    const maxPitch = Math.max(selection.startPitch, selection.endPitch);
-
-    // 常に拡張ピッチ座標に変換
-    const displayMinPitch = minPitch + NORMAL_PITCH_OFFSET;
-    const displayMaxPitch = maxPitch + NORMAL_PITCH_OFFSET;
+    // selection.startPitch/endPitchはdisplayPitch（オクターブオフセット適用済み）
+    const minDisplayPitch = Math.min(selection.startPitch, selection.endPitch);
+    const maxDisplayPitch = Math.max(selection.startPitch, selection.endPitch);
 
     return {
       left: PLAYBACK_LEFT_BUFFER + minTick * cellWidth,
-      top: (currentPitchCount - 1 - displayMaxPitch) * cellHeight,
+      top: (currentPitchCount - 1 - maxDisplayPitch) * cellHeight,
       width: (maxTick - minTick + 1) * cellWidth,
-      height: (displayMaxPitch - displayMinPitch + 1) * cellHeight,
+      height: (maxDisplayPitch - minDisplayPitch + 1) * cellHeight,
     };
   };
 
@@ -725,7 +735,7 @@ export const PianoRoll: React.FC = () => {
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onMouseLeave={() => { handleMouseUp(); handleMouseLeave(); }}
       onContextMenu={handleContextMenu}
       onWheel={handleWheel}
       onScroll={handleScroll}
