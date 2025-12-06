@@ -333,8 +333,18 @@ export const PianoRoll: React.FC = () => {
   }, [viewportState.scrollTop, viewportState.clientHeight, cellHeight, currentPitchCount]);
 
   // 同じ位置のノートをグループ化（常に拡張ピッチ座標系、オクターブオフセット考慮）
+  // 仮想化範囲のみを処理してパフォーマンス改善
   const groupedNotes = useMemo(() => {
-    const visibleNotes = notes.filter(note => visibleLayerIds.has(note.layerId));
+    const visibleNotes = notes.filter(note => {
+      // レイヤー表示チェック
+      if (!visibleLayerIds.has(note.layerId)) return false;
+      
+      // tick範囲チェック（仮想化）
+      if (note.tick < visibleTickRange.min || note.tick > visibleTickRange.max) return false;
+      
+      return true;
+    });
+    
     const groups = new Map<string, { note: typeof notes[0]; displayPitch: number }[]>();
     
     for (const note of visibleNotes) {
@@ -349,6 +359,11 @@ export const PianoRoll: React.FC = () => {
         continue; // 表示範囲外はスキップ
       }
       
+      // ピッチ範囲チェック（仮想化）
+      if (displayPitch < visiblePitchRange.min || displayPitch > visiblePitchRange.max) {
+        continue;
+      }
+      
       const key = `${note.tick}-${displayPitch}`;
       if (!groups.has(key)) {
         groups.set(key, []);
@@ -357,7 +372,7 @@ export const PianoRoll: React.FC = () => {
     }
     
     return groups;
-  }, [notes, visibleLayerIds]);
+  }, [notes, visibleLayerIds, visibleTickRange, visiblePitchRange]);
 
   // グリッドへのスナップ（useCallbackでメモ化）
   const snapToGridValue = useCallback((tick: number): number => {
@@ -795,23 +810,31 @@ export const PianoRoll: React.FC = () => {
               }
             }}
           >
-            {Array.from({ length: Math.ceil(totalTicks / headerTickInterval) + 1 }).map((_, index) => {
-              const tick = index * headerTickInterval;
-              if (tick >= totalTicks) return null;
+            {/* ヘッダーtick表示（仮想化） */}
+            {(() => {
+              const startIndex = Math.max(0, Math.floor(visibleTickRange.min / headerTickInterval) - 1);
+              const endIndex = Math.ceil(visibleTickRange.max / headerTickInterval) + 1;
+              const labels = [];
               
-              return (
-                <div
-                  key={tick}
-                  className="absolute top-0 h-full flex items-center text-[10px] text-slate-400 font-mono pointer-events-none"
-                  style={{ 
-                    left: PLAYBACK_LEFT_BUFFER + tick * cellWidth,
-                    width: headerTickInterval * cellWidth,
-                  }}
-                >
-                  <span className="pl-1">{tick}</span>
-                </div>
-              );
-            })}
+              for (let index = startIndex; index <= endIndex; index++) {
+                const tick = index * headerTickInterval;
+                if (tick >= totalTicks) break;
+                
+                labels.push(
+                  <div
+                    key={tick}
+                    className="absolute top-0 h-full flex items-center text-[10px] text-slate-400 font-mono pointer-events-none"
+                    style={{ 
+                      left: PLAYBACK_LEFT_BUFFER + tick * cellWidth,
+                      width: headerTickInterval * cellWidth,
+                    }}
+                  >
+                    <span className="pl-1">{tick}</span>
+                  </div>
+                );
+              }
+              return labels;
+            })()}
             {/* チェックポイントマーカー（ヘッダー内） */}
             {checkpoint !== null && (
               <div
@@ -896,11 +919,12 @@ export const PianoRoll: React.FC = () => {
 
         {/* グリッド領域 */}
         <div className="relative bg-slate-900/50 overflow-hidden" style={{ width: gridWidth, height: gridHeight }}>
-          {/* 黒鍵/白鍵の行背景色 */}
-          {Array.from({ length: currentPitchCount }).map((_, index) => {
-            const noteIndex = currentPitchCount - 1 - index;
-            const noteName = currentNoteNames[noteIndex];
-            const isBlackKey = noteName.includes('#');
+          {/* 黒鍵/白鍵の行背景色（仮想化: 表示範囲のみ描画） */}
+          {Array.from({ length: visiblePitchRange.max - visiblePitchRange.min + 1 }).map((_, i) => {
+            const displayPitch = visiblePitchRange.min + i;
+            const index = currentPitchCount - 1 - displayPitch;
+            const noteName = currentNoteNames[displayPitch];
+            const isBlackKey = noteName?.includes('#') ?? false;
             
             return (
               <div
@@ -917,14 +941,17 @@ export const PianoRoll: React.FC = () => {
             );
           })}
           
-          {/* グリッド線 */}
+          {/* グリッド線（仮想化: 表示範囲のみ描画） */}
           <svg
             className="absolute inset-0 pointer-events-none"
             width={gridWidth}
             height={gridHeight}
           >
-            {/* 水平線 */}
-            {Array.from({ length: currentPitchCount }).map((_, index) => {
+            {/* 水平線（仮想化） */}
+            {Array.from({ length: visiblePitchRange.max - visiblePitchRange.min + 1 }).map((_, i) => {
+              const displayPitch = visiblePitchRange.min + i;
+              const index = currentPitchCount - 1 - displayPitch;
+              
               // 通常範囲の境界線（青）: pitch 0〜24 が offset=0 で配置できる範囲
               // 上境界: noteIndex = NORMAL_PITCH_OFFSET + 24 の上 → index = 73-1-48 = 24
               // 下境界: noteIndex = NORMAL_PITCH_OFFSET - 1 の下 → index = 73-1-23 = 49
@@ -973,23 +1000,31 @@ export const PianoRoll: React.FC = () => {
                 />
               );
             })}
-            {/* 垂直線（グリッドサイズごと） */}
-            {Array.from({ length: Math.ceil(totalTicks / gridSize) + 1 }).map((_, index) => {
-              const x = PLAYBACK_LEFT_BUFFER + index * gridSize * cellWidth;
-              const isMeasure = index % 4 === 0;
-              return (
-                <line
-                  key={`v-${index}`}
-                  x1={x}
-                  y1={0}
-                  x2={x}
-                  y2={gridHeight}
-                  stroke={isMeasure ? '#475569' : '#1e293b'}
-                  strokeWidth={isMeasure ? 1 : 1}
-                  strokeOpacity={isMeasure ? 0.5 : 0.3}
-                />
-              );
-            })}
+            {/* 垂直線（グリッドサイズごと、仮想化） */}
+            {(() => {
+              // 表示範囲のグリッド線のみ描画
+              const startGridIndex = Math.max(0, Math.floor(visibleTickRange.min / gridSize) - 1);
+              const endGridIndex = Math.min(Math.ceil(totalTicks / gridSize), Math.ceil(visibleTickRange.max / gridSize) + 1);
+              const lines = [];
+              
+              for (let index = startGridIndex; index <= endGridIndex; index++) {
+                const x = PLAYBACK_LEFT_BUFFER + index * gridSize * cellWidth;
+                const isMeasure = index % 4 === 0;
+                lines.push(
+                  <line
+                    key={`v-${index}`}
+                    x1={x}
+                    y1={0}
+                    x2={x}
+                    y2={gridHeight}
+                    stroke={isMeasure ? '#475569' : '#1e293b'}
+                    strokeWidth={isMeasure ? 1 : 1}
+                    strokeOpacity={isMeasure ? 0.5 : 0.3}
+                  />
+                );
+              }
+              return lines;
+            })()}
           </svg>
 
           {/* チェックポイントライン（グリッド内） */}
