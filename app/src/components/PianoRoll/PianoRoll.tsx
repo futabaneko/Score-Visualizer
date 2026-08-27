@@ -29,6 +29,7 @@ const TIMELINE_EXTENSION_TICKS = 200;
 
 // 仮想化用のバッファ（画面外にも少し余裕を持たせる）
 const VIRTUALIZATION_BUFFER = 5; // tick数
+const VIRTUALIZATION_PIXEL_BUFFER = 256;
 
 // 楽器IDからインデックスへのマップ（高速化用）
 const INSTRUMENT_MAP = new Map(INSTRUMENTS.map((inst) => [inst.id, inst]));
@@ -349,6 +350,19 @@ export const PianoRoll: React.FC = () => {
     
     return { min: minDisplayPitch, max: maxDisplayPitch };
   }, [viewportState.scrollTop, viewportState.clientHeight, cellHeight, currentPitchCount]);
+
+  // 巨大なSVGはブラウザの描画タイル境界で1px線が欠けることがあるため、
+  // グリッド線用SVGは表示中の横範囲と前後の余白だけに限定する。
+  const visibleGridXRange = useMemo(() => {
+    const scrollLeft = viewportState.scrollLeft;
+    const clientWidth = viewportState.clientWidth || 1000;
+    const viewportStart = scrollLeft - PIANO_KEY_WIDTH;
+    const viewportEnd = viewportStart + clientWidth;
+    const start = Math.max(0, viewportStart - VIRTUALIZATION_PIXEL_BUFFER);
+    const end = Math.min(gridWidth, viewportEnd + VIRTUALIZATION_PIXEL_BUFFER);
+
+    return { start, width: Math.max(0, end - start) };
+  }, [viewportState.scrollLeft, viewportState.clientWidth, gridWidth]);
 
   // 同じ位置のノートをグループ化（常に拡張ピッチ座標系、オクターブオフセット考慮）
   // 仮想化範囲のみを処理してパフォーマンス改善
@@ -1068,8 +1082,9 @@ export const PianoRoll: React.FC = () => {
           
           {/* グリッド線（仮想化: 表示範囲のみ描画） */}
           <svg
-            className="absolute inset-0 pointer-events-none"
-            width={gridWidth}
+            className="absolute top-0 pointer-events-none"
+            style={{ left: visibleGridXRange.start }}
+            width={visibleGridXRange.width}
             height={gridHeight}
           >
             {/* 水平線（仮想化） */}
@@ -1117,7 +1132,7 @@ export const PianoRoll: React.FC = () => {
                   key={`h-${index}`}
                   x1={0}
                   y1={index * cellHeight}
-                  x2={gridWidth}
+                  x2={visibleGridXRange.width}
                   y2={index * cellHeight}
                   stroke={strokeColor}
                   strokeWidth={strokeWidth}
@@ -1133,7 +1148,7 @@ export const PianoRoll: React.FC = () => {
               const lines = [];
               
               for (let index = startGridIndex; index <= endGridIndex; index++) {
-                const x = PLAYBACK_LEFT_BUFFER + index * gridSize * cellWidth;
+                const x = PLAYBACK_LEFT_BUFFER + index * gridSize * cellWidth - visibleGridXRange.start;
                 const isMeasure = index % 4 === 0;
                 lines.push(
                   <line
