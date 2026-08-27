@@ -1,4 +1,5 @@
 import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useScoreStore } from '../../store/useScoreStore';
 import {
   PITCHES,
@@ -8,16 +9,23 @@ import {
   CELL_HEIGHT,
   PIANO_KEY_WIDTH,
 } from '../../constants';
-import { playNote } from '../../utils/audioEngine';
+import { playNote, playNoteBatch } from '../../utils/audioEngine';
+import { MAX_TOTAL_TICKS } from '../../utils/timeline';
 import type { Note } from '../../types';
+import { PlusIcon } from '../icons';
+import { CellPopup } from './CellPopup';
 
-type DragMode = 'none' | 'erase' | 'select';
+type DragMode = 'none' | 'erase' | 'select-pending' | 'select' | 'move-pending' | 'move';
 
 // セル番号ヘッダーの高さ
 const HEADER_HEIGHT = 24;
 
 // 再生開始時の左側バッファ（ピクセル）
 const PLAYBACK_LEFT_BUFFER = 120;
+
+// 楽譜末尾の操作用余白
+const TIMELINE_END_PADDING = 96;
+const TIMELINE_EXTENSION_TICKS = 200;
 
 // 仮想化用のバッファ（画面外にも少し余裕を持たせる）
 const VIRTUALIZATION_BUFFER = 5; // tick数
@@ -87,13 +95,14 @@ const NoteLayer = React.memo(({
   cellWidth, 
   cellHeight, 
   currentPitchCount, 
-  isGlobalLayerActive, 
-  selectedNotes, 
+  isGlobalLayerActive,
+  selectedNotes,
   layerColorMap,
   layerNameMap,
   leftBuffer,
   visibleTickRange,
   visiblePitchRange,
+  moveOffset,
 }: {
   groupedNotes: Map<string, { note: Note; displayPitch: number }[]>;
   cellWidth: number;
@@ -106,10 +115,11 @@ const NoteLayer = React.memo(({
   leftBuffer: number;
   visibleTickRange: { min: number; max: number };
   visiblePitchRange: { min: number; max: number };
+  moveOffset: { tick: number; pitch: number } | null;
 }) => {
   // ビューポート内のノートのみをフィルタリング
   const visibleNotes = useMemo(() => {
-    const result: [string, { note: any; displayPitch: number }[]][] = [];
+    const result: [string, { note: Note; displayPitch: number }[]][] = [];
     
     groupedNotes.forEach((groupNotes, key) => {
       const firstEntry = groupNotes[0];
@@ -161,17 +171,17 @@ const NoteLayer = React.memo(({
                 ? EXTENDED_NOTE_NAMES[displayPitch] 
                 : NOTE_NAMES[displayPitch];
               const originalPitchName = PITCHES[note.pitch];
+              const noteColor = layerColorMap.get(note.layerId) || instrument?.color || '#64748b';
+              const selectedMoveX = isSelected && moveOffset ? moveOffset.tick * cellWidth : 0;
+              const selectedMoveY = isSelected && moveOffset ? -moveOffset.pitch * cellHeight : 0;
               
-              // レイヤー色を高速に取得
-              const noteColor = layerColorMap.get(note.layerId) || instrument?.color || '#888888';
-
               return (
                 <div
                   key={note.id}
                   className={`
-                    absolute rounded cursor-pointer shadow-md
+                    score-note absolute rounded cursor-pointer shadow-sm
                     ${isSelected ? 'ring-2 ring-cyan-400 ring-offset-1 ring-offset-slate-900 z-20' : ''}
-                    ${hasOctaveOffset ? 'border border-dashed border-white/40' : ''}
+                    ${hasOctaveOffset ? 'border-dashed' : ''}
                   `}
                   style={{
                     left: offsetX,
@@ -180,12 +190,15 @@ const NoteLayer = React.memo(({
                     height: noteHeight,
                     backgroundColor: noteColor,
                     zIndex: isSelected ? 20 : 10 + index,
+                    transform: `translate(${selectedMoveX}px, ${selectedMoveY}px)`,
                   }}
+                  data-note-id={note.id}
+                  data-layer-id={note.layerId}
                   title={`${instrument?.nameJa || '不明'} - ${originalPitchName}${hasOctaveOffset ? ` → ${displayPitchName} (${instrument!.octaveOffset! > 0 ? '+' : ''}${instrument!.octaveOffset}oct)` : ''} (${layerNameMap.get(note.layerId) || '不明'})`}
                 >
                   {/* 楽器記号を表示（オクターブオフセットがある場合は色を変える） */}
                   {cellWidth > 18 && !hasMultiple && (
-                    <span className={`text-[8px] font-bold absolute inset-0 flex items-center justify-center ${hasOctaveOffset ? 'text-yellow-300' : 'text-white/80'}`}>
+                    <span className="text-[8px] font-bold text-white absolute inset-0 flex items-center justify-center">
                       {instrument?.symbol}
                     </span>
                   )}
@@ -220,6 +233,8 @@ export const PianoRoll: React.FC = () => {
   const [dragMode, setDragMode] = useState<DragMode>('none');
   const [dragStart, setDragStart] = useState<{ tick: number; pitch: number; displayPitch: number } | null>(null);
   const [dragEnd, setDragEnd] = useState<{ tick: number; pitch: number; displayPitch: number } | null>(null);
+  const [moveCandidate, setMoveCandidate] = useState<{ noteId: string; screenX: number; screenY: number } | null>(null);
+  const [moveOffset, setMoveOffset] = useState<{ tick: number; pitch: number } | null>(null);
   
   // マウス位置の追跡（ペースト位置用）
   const [mousePosition, setMousePosition] = useState<{ tick: number; displayPitch: number } | null>(null);
@@ -241,7 +256,7 @@ export const PianoRoll: React.FC = () => {
     pitch: number;
     screenX: number;
     screenY: number;
-    notes: Array<{ id: string; instrument: string; layerId: string }>;
+    notes: Array<{ id: string; instrument: string; layerId: string; pitch: number }>;
   } | null>(null);
 
   const closeCellPopup = useCallback(() => {
@@ -267,7 +282,9 @@ export const PianoRoll: React.FC = () => {
     copySelected,
     paste,
     cut,
+    moveSelected,
     setCurrentTick,
+    setTotalTicks,
     toggleCheckpoint,
   } = useScoreStore();
 
@@ -290,7 +307,8 @@ export const PianoRoll: React.FC = () => {
 
   const cellWidth = CELL_WIDTH * zoom;
   const cellHeight = CELL_HEIGHT;
-  const gridWidth = totalTicks * cellWidth + PLAYBACK_LEFT_BUFFER; // 左側バッファを追加
+  const scoreWidth = totalTicks * cellWidth + PLAYBACK_LEFT_BUFFER;
+  const gridWidth = scoreWidth + TIMELINE_END_PADDING;
   const gridHeight = currentPitchCount * cellHeight;
 
   // レイヤーの表示状態マップ
@@ -300,9 +318,9 @@ export const PianoRoll: React.FC = () => {
   );
   
   // レイヤー色とレイヤー名のマップ（高速化用）
-  const layerColorMap = useMemo(() => 
-    new Map(layers.map(l => [l.id, l.color])),
-    [layers]
+  const layerColorMap = useMemo(() =>
+    new Map(layers.map((layer) => [layer.id, layer.color])),
+    [layers],
   );
   const layerNameMap = useMemo(() => 
     new Map(layers.map(l => [l.id, l.name])),
@@ -380,6 +398,25 @@ export const PianoRoll: React.FC = () => {
     return Math.round(tick / gridSize) * gridSize;
   }, [snapToGrid, gridSize]);
 
+  const placeSelectedNote = useCallback((tick: number, pitch: number) => {
+    if (isGlobalLayerActive) return;
+
+    deselectAll();
+    if (pitch < 0 || pitch >= PITCHES.length) {
+      setErrorMessage(`${selectedInstrumentData?.nameJa || selectedInstrument}はこの位置に置けません（ピッチ範囲外）`);
+      setTimeout(() => setErrorMessage(null), 3000);
+      return;
+    }
+
+    const result = addNote(tick, pitch, selectedInstrument);
+    if (result.success) {
+      playNote(selectedInstrument, pitch);
+    } else if (result.error) {
+      setErrorMessage(result.error);
+      setTimeout(() => setErrorMessage(null), 3000);
+    }
+  }, [addNote, deselectAll, isGlobalLayerActive, selectedInstrument, selectedInstrumentData]);
+
   // マウス位置から座標を計算
   const getPositionFromEvent = useCallback(
     (e: React.MouseEvent): { tick: number; pitch: number; displayPitch: number } | null => {
@@ -411,8 +448,49 @@ export const PianoRoll: React.FC = () => {
 
       return { tick, pitch, displayPitch };
     },
-    [cellWidth, snapToGridValue, totalTicks, selectedOctaveOffset]
+    [cellWidth, cellHeight, snapToGridValue, totalTicks, selectedOctaveOffset]
   );
+
+  const handlePrimaryCellAction = useCallback((
+    pos: { tick: number; pitch: number; displayPitch: number },
+    screenX: number,
+    screenY: number,
+  ) => {
+    const notesAtCell = notes.filter((note) => {
+      if (!visibleLayerIds.has(note.layerId)) return false;
+      const instrument = INSTRUMENT_MAP.get(note.instrument);
+      const octaveOffset = instrument?.octaveOffset || 0;
+      const noteDisplayPitch = note.pitch + NORMAL_PITCH_OFFSET + (octaveOffset * 12);
+      return note.tick === pos.tick && noteDisplayPitch === pos.displayPitch;
+    });
+
+    if (notesAtCell.length > 0) {
+      const audibleNotes = isGlobalLayerActive
+        ? notesAtCell
+        : notesAtCell.filter(note => note.layerId === activeLayerId);
+      if (audibleNotes.length > 0) {
+        playNoteBatch(audibleNotes.map(note => ({ instrument: note.instrument, pitch: note.pitch })));
+      }
+      setCellPopup({
+        tick: pos.tick,
+        pitch: pos.pitch,
+        screenX,
+        screenY,
+        notes: notesAtCell.map(note => ({
+          id: note.id,
+          instrument: note.instrument,
+          layerId: note.layerId,
+          pitch: note.pitch,
+        })),
+      });
+      return;
+    }
+
+    if (!isGlobalLayerActive) {
+      setCellPopup(null);
+      placeSelectedNote(pos.tick, pos.pitch);
+    }
+  }, [activeLayerId, isGlobalLayerActive, notes, placeSelectedNote, visibleLayerIds]);
 
   // マウスダウン処理
   const handleMouseDown = useCallback(
@@ -420,18 +498,31 @@ export const PianoRoll: React.FC = () => {
       // ポップアップを閉じる（ポップアップ内のクリックは除く）
       if (cellPopup && !(e.target as HTMLElement).closest('.cell-popup')) {
         setCellPopup(null);
-        return;
       }
       
       const pos = getPositionFromEvent(e);
       if (!pos) return;
 
-      // Shift+クリックで範囲選択開始
-      if (e.shiftKey) {
+      // Shift+クリックは強制配置、Shift+ドラッグは範囲選択として扱う
+      if (e.shiftKey && e.button === 0) {
         setCellPopup(null);
-        setDragMode('select');
+        setDragMode('select-pending');
         setDragStart(pos);
         setDragEnd(pos);
+        return;
+      }
+
+      const noteElement = (e.target as HTMLElement).closest<HTMLElement>('[data-note-id]');
+      if (e.button === 0 && noteElement?.dataset.layerId === activeLayerId && !isGlobalLayerActive) {
+        setDragMode('move-pending');
+        setDragStart(pos);
+        setDragEnd(pos);
+        setMoveCandidate({
+          noteId: noteElement.dataset.noteId!,
+          screenX: e.clientX,
+          screenY: e.clientY,
+        });
+        setMoveOffset({ tick: 0, pitch: 0 });
         return;
       }
 
@@ -451,51 +542,10 @@ export const PianoRoll: React.FC = () => {
 
       // 左クリック
       if (e.button === 0) {
-        // このセルにある音符を取得（displayPitchベースで検索）
-        const notesAtCell = notes.filter((n) => {
-          if (!visibleLayerIds.has(n.layerId)) return false;
-          const inst = INSTRUMENT_MAP.get(n.instrument);
-          const offset = inst?.octaveOffset || 0;
-          const noteDisplayPitch = n.pitch + NORMAL_PITCH_OFFSET + (offset * 12);
-          return n.tick === pos.tick && noteDisplayPitch === pos.displayPitch;
-        });
-        
-        if (notesAtCell.length > 0) {
-          // 音符がある場合はポップアップを表示
-          setCellPopup({
-            tick: pos.tick,
-            pitch: pos.pitch,
-            screenX: e.clientX,
-            screenY: e.clientY,
-            notes: notesAtCell.map(n => ({
-              id: n.id,
-              instrument: n.instrument,
-              layerId: n.layerId,
-            })),
-          });
-        } else if (!isGlobalLayerActive) {
-          // 音符がなければ新規追加（pitchが有効範囲内の場合のみ）
-          setCellPopup(null);
-          deselectAll();
-          
-          // pitchが有効範囲（0〜24）外ならエラー
-          if (pos.pitch < 0 || pos.pitch >= PITCHES.length) {
-            setErrorMessage(`${selectedInstrumentData?.nameJa || selectedInstrument}はこの位置に置けません（ピッチ範囲外）`);
-            setTimeout(() => setErrorMessage(null), 3000);
-            return;
-          }
-          
-          const result = addNote(pos.tick, pos.pitch, selectedInstrument);
-          if (result.success) {
-            playNote(selectedInstrument, pos.pitch);
-          } else if (result.error) {
-            setErrorMessage(result.error);
-            setTimeout(() => setErrorMessage(null), 3000);
-          }
-        }
+        handlePrimaryCellAction(pos, e.clientX, e.clientY);
       }
     },
-    [getPositionFromEvent, notes, selectedInstrument, selectedInstrumentData, addNote, removeNotesAt, deselectAll, visibleLayerIds, isGlobalLayerActive, cellPopup]
+    [activeLayerId, cellPopup, getPositionFromEvent, handlePrimaryCellAction, isGlobalLayerActive, removeNotesAt]
   );
 
   // マウス移動処理
@@ -510,19 +560,53 @@ export const PianoRoll: React.FC = () => {
       // マウス位置を更新（ペースト位置用）
       setMousePosition({ tick: pos.tick, displayPitch: pos.displayPitch });
 
-      if (dragMode === 'select' && dragStart) {
+      if (dragMode === 'select-pending' && dragStart &&
+          (pos.tick !== dragStart.tick || pos.displayPitch !== dragStart.displayPitch)) {
+        setDragMode('select');
+        setDragEnd(pos);
+      } else if (dragMode === 'move-pending' && dragStart && moveCandidate &&
+          (pos.tick !== dragStart.tick || pos.displayPitch !== dragStart.displayPitch)) {
+        if (!selectedNotes.has(moveCandidate.noteId)) {
+          useScoreStore.setState({
+            selectedNotes: new Set([moveCandidate.noteId]),
+            selection: null,
+          });
+        }
+        setDragMode('move');
+        setDragEnd(pos);
+        setMoveOffset({
+          tick: pos.tick - dragStart.tick,
+          pitch: pos.displayPitch - dragStart.displayPitch,
+        });
+      } else if (dragMode === 'move' && dragStart) {
+        setDragEnd(pos);
+        setMoveOffset({
+          tick: pos.tick - dragStart.tick,
+          pitch: pos.displayPitch - dragStart.displayPitch,
+        });
+      } else if (dragMode === 'select' && dragStart) {
         setDragEnd(pos);
       } else if (dragMode === 'erase') {
         removeNotesAt(pos.tick, pos.pitch);
       }
       // ドラッグ描画は無効化
     },
-    [dragMode, dragStart, getPositionFromEvent, removeNotesAt]
+    [dragMode, dragStart, getPositionFromEvent, moveCandidate, removeNotesAt, selectedNotes]
   );
 
   // マウスアップ処理
   const handleMouseUp = useCallback(() => {
-    if (dragMode === 'select' && dragStart && dragEnd) {
+    if (dragMode === 'select-pending' && dragStart) {
+      placeSelectedNote(dragStart.tick, dragStart.pitch);
+    } else if (dragMode === 'move-pending' && dragStart && moveCandidate) {
+      handlePrimaryCellAction(dragStart, moveCandidate.screenX, moveCandidate.screenY);
+    } else if (dragMode === 'move' && moveOffset) {
+      const result = moveSelected(moveOffset.tick, moveOffset.pitch);
+      if (result.error) {
+        setErrorMessage(result.error);
+        setTimeout(() => setErrorMessage(null), 2000);
+      }
+    } else if (dragMode === 'select' && dragStart && dragEnd) {
       // displayPitchベースで選択範囲を渡す（オクターブオフセット対応）
       selectNotesInRange({
         startTick: dragStart.tick,
@@ -535,7 +619,9 @@ export const PianoRoll: React.FC = () => {
     setDragMode('none');
     setDragStart(null);
     setDragEnd(null);
-  }, [dragMode, dragStart, dragEnd, selectNotesInRange]);
+    setMoveCandidate(null);
+    setMoveOffset(null);
+  }, [dragMode, dragStart, dragEnd, handlePrimaryCellAction, moveCandidate, moveOffset, moveSelected, placeSelectedNote, selectNotesInRange]);
 
   // コンテキストメニューを無効化
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -597,6 +683,18 @@ export const PianoRoll: React.FC = () => {
       if (e.key === 'Delete' || e.key === 'Backspace') {
         useScoreStore.getState().deleteSelected();
       }
+
+      // 選択中の音符を矢印キーで一括移動
+      if (selectedNotes.size > 0 && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+        e.preventDefault();
+        const deltaTick = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+        const deltaPitch = e.key === 'ArrowDown' ? -1 : e.key === 'ArrowUp' ? 1 : 0;
+        const result = moveSelected(deltaTick, deltaPitch);
+        if (result.error) {
+          setErrorMessage(result.error);
+          setTimeout(() => setErrorMessage(null), 2000);
+        }
+      }
       
       // Ctrl+Z / Ctrl+Shift+Z でUndo/Redo
       if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
@@ -655,12 +753,21 @@ export const PianoRoll: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [copySelected, paste, cut, deselectAll, mousePosition]);
+  }, [copySelected, paste, cut, deselectAll, mousePosition, moveSelected, selectedNotes.size]);
 
   // マウスがPianoRollから離れたときにmousePositionをクリア
   const handleMouseLeave = useCallback(() => {
     setMousePosition(null);
-  }, []);
+    if (dragMode === 'select-pending' || dragMode === 'move-pending') {
+      setDragMode('none');
+      setDragStart(null);
+      setDragEnd(null);
+      setMoveCandidate(null);
+      setMoveOffset(null);
+      return;
+    }
+    handleMouseUp();
+  }, [dragMode, handleMouseUp]);
 
   // 選択範囲の描画用座標を計算（常に拡張ピッチ座標系）
   const getSelectionRect = () => {
@@ -750,7 +857,7 @@ export const PianoRoll: React.FC = () => {
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onMouseLeave={() => { handleMouseUp(); handleMouseLeave(); }}
+      onMouseLeave={handleMouseLeave}
       onContextMenu={handleContextMenu}
       onWheel={handleWheel}
       onScroll={handleScroll}
@@ -759,23 +866,25 @@ export const PianoRoll: React.FC = () => {
         
         {/* クリップボード状態表示（スティッキー） */}
         {clipboard.length > 0 && (
-          <div className="fixed top-[60px] left-[250px] z-50 bg-blue-900/90 text-blue-300 text-xs px-3 py-1.5 rounded-lg border border-blue-700/50 backdrop-blur-sm shadow-lg">
-            📋 クリップボード: {clipboard.length}個の音符 (Ctrl+V でペースト)
+          <div className="notice notice-info fixed top-[60px] left-[250px] z-50 text-xs px-3 py-1.5 rounded-lg border">
+            クリップボード: {clipboard.length}個の音符 (Ctrl+V でペースト)
           </div>
         )}
 
         {/* 全体レイヤー表示中の注意書き（スティッキー） */}
-        {isGlobalLayerActive && (
-          <div className="fixed top-[60px] right-4 z-50 bg-amber-900/90 text-amber-300 text-xs px-3 py-1.5 rounded-lg border border-amber-700/50 backdrop-blur-sm shadow-lg">
-            🌐 全体表示モード（編集不可）
-          </div>
+        {isGlobalLayerActive && createPortal(
+          <div className="editor-message fixed right-4 top-[72px] z-[70] rounded-md border px-3 py-2 text-xs">
+            全体表示モード · 閲覧のみ
+          </div>,
+          document.body,
         )}
         
         {/* エラーメッセージ表示 */}
-        {errorMessage && (
-          <div className="fixed top-[60px] left-1/2 transform -translate-x-1/2 z-50 bg-red-900/90 text-red-300 text-sm px-4 py-2 rounded-lg border border-red-700/50 backdrop-blur-sm shadow-lg animate-pulse">
-            ⚠️ {errorMessage}
-          </div>
+        {errorMessage && createPortal(
+          <div className="editor-message editor-message-error fixed bottom-5 left-1/2 z-[70] -translate-x-1/2 rounded-md border px-3 py-2 text-sm">
+            {errorMessage}
+          </div>,
+          document.body,
         )}
 
         {/* セル番号ヘッダー（スティッキー） */}
@@ -856,6 +965,25 @@ export const PianoRoll: React.FC = () => {
                 style={{ left: PLAYBACK_LEFT_BUFFER + currentTick * cellWidth }}
               />
             )}
+            <div
+              className="timeline-end-zone absolute top-0 bottom-0"
+              style={{ left: scoreWidth, width: TIMELINE_END_PADDING }}
+            />
+            <button
+              type="button"
+              className="timeline-add-button absolute top-0.5 z-20 flex h-5 w-5 items-center justify-center rounded border transition-colors"
+              style={{ left: scoreWidth + (TIMELINE_END_PADDING - 20) / 2 }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setTotalTicks(totalTicks + TIMELINE_EXTENSION_TICKS);
+              }}
+              disabled={totalTicks >= MAX_TOTAL_TICKS}
+              title={totalTicks >= MAX_TOTAL_TICKS ? 'Lengthの上限です' : '200 tick追加'}
+              aria-label="200 tick追加"
+            >
+              <PlusIcon />
+            </button>
           </div>
         </div>
 
@@ -882,9 +1010,9 @@ export const PianoRoll: React.FC = () => {
                 (actualPitch - selectedOctaveOffset * 12) < PITCHES.length;
               
               // オクターブ範囲の背景色を変更
-              let bgClass = isBlackKey ? 'bg-slate-900 text-slate-500' : 'bg-slate-800 text-slate-300';
+              let bgClass = isBlackKey ? 'piano-key-dark' : 'piano-key-light';
               if (!isNormalRange) {
-                bgClass = isBlackKey ? 'bg-slate-950/80 text-slate-600' : 'bg-slate-900/50 text-slate-500';
+                bgClass = isBlackKey ? 'piano-key-dark' : 'piano-key-light';
               }
 
               return (
@@ -895,13 +1023,10 @@ export const PianoRoll: React.FC = () => {
                     cursor-pointer select-none transition-all duration-100
                     ${bgClass}
                     ${!isNormalRange ? 'opacity-60' : ''}
+                    ${!isGlobalLayerActive && isInSelectedInstrumentRange ? 'piano-key-placeable' : ''}
                     hover:brightness-125 hover:pl-1
                   `}
-                  style={{ 
-                    height: cellHeight,
-                    // 選択中の楽器の有効範囲内は左側に黄色いバーを表示
-                    borderLeft: !isGlobalLayerActive && isInSelectedInstrumentRange ? '3px solid #eab308' : 'none',
-                  }}
+                  style={{ height: cellHeight }}
                   onClick={() => {
                     // 通常範囲内のみ音を鳴らす
                     if (actualPitch >= 0 && actualPitch < PITCHES.length) {
@@ -935,7 +1060,7 @@ export const PianoRoll: React.FC = () => {
                   top: index * cellHeight,
                   width: gridWidth,
                   height: cellHeight,
-                  backgroundColor: isBlackKey ? 'rgba(15, 23, 42, 0.6)' : 'rgba(51, 65, 85, 0.25)',
+                  backgroundColor: isBlackKey ? 'var(--grid-row-dark)' : 'var(--grid-row-light)',
                 }}
               />
             );
@@ -973,7 +1098,7 @@ export const PianoRoll: React.FC = () => {
                 (index === instrumentTopBoundaryIndex || index === instrumentBottomBoundaryIndex);
               
               // 色の決定: 楽器境界 > 通常境界 > 通常線
-              let strokeColor = '#1e293b';
+              let strokeColor = 'var(--grid-line)';
               let strokeWidth = 1;
               let strokeOpacity = 0.5;
               
@@ -1017,7 +1142,7 @@ export const PianoRoll: React.FC = () => {
                     y1={0}
                     x2={x}
                     y2={gridHeight}
-                    stroke={isMeasure ? '#475569' : '#1e293b'}
+                    stroke={isMeasure ? 'var(--grid-line-strong)' : 'var(--grid-line)'}
                     strokeWidth={isMeasure ? 1 : 1}
                     strokeOpacity={isMeasure ? 0.5 : 0.3}
                   />
@@ -1026,6 +1151,11 @@ export const PianoRoll: React.FC = () => {
               return lines;
             })()}
           </svg>
+
+          <div
+            className="timeline-end-zone absolute top-0 bottom-0 z-10"
+            style={{ left: scoreWidth, width: TIMELINE_END_PADDING }}
+          />
 
           {/* チェックポイントライン（グリッド内） */}
           {checkpoint !== null && (
@@ -1057,6 +1187,9 @@ export const PianoRoll: React.FC = () => {
                 top: confirmedSelectionRect.top,
                 width: confirmedSelectionRect.width,
                 height: confirmedSelectionRect.height,
+                transform: dragMode === 'move' && moveOffset
+                  ? `translate(${moveOffset.tick * cellWidth}px, ${-moveOffset.pitch * cellHeight}px)`
+                  : undefined,
               }}
             />
           )}
@@ -1087,141 +1220,28 @@ export const PianoRoll: React.FC = () => {
             leftBuffer={PLAYBACK_LEFT_BUFFER}
             visibleTickRange={visibleTickRange}
             visiblePitchRange={visiblePitchRange}
+            moveOffset={dragMode === 'move' ? moveOffset : null}
           />
         </div>
         </div>
 
         {/* セルポップアップ */}
         {cellPopup && (
-          <div
-            className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl min-w-[200px] max-w-[280px] cell-popup"
-            style={{
-              left: cellPopup.screenX,
-              top: cellPopup.screenY,
-              transform: 'translate(-50%, 8px)',
+          <CellPopup
+            {...cellPopup}
+            layers={layers}
+            activeLayerId={activeLayerId}
+            selectedInstrument={selectedInstrument}
+            isGlobalLayerActive={isGlobalLayerActive}
+            onClose={closeCellPopup}
+            onRemoveNote={removeNote}
+            onAddNote={placeSelectedNote}
+            onUpdateNotes={(updatedNotes) => {
+              setCellPopup((previous) => previous && updatedNotes
+                ? { ...previous, notes: updatedNotes }
+                : null);
             }}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* ヘッダー */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
-              <span className="text-xs text-slate-400">
-                Tick {cellPopup.tick}, Pitch {cellPopup.pitch}
-              </span>
-              <button
-                onClick={closeCellPopup}
-                className="text-slate-500 hover:text-slate-300 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* 音符リスト */}
-            <div className="max-h-[200px] overflow-y-auto">
-              {cellPopup.notes.length > 0 ? (
-                <div className="py-1">
-                  {cellPopup.notes.map((note) => {
-                    const layer = layers.find(l => l.id === note.layerId);
-                    const layerColor = layer?.color || '#888';
-                    return (
-                      <div
-                        key={note.id}
-                        className="flex items-center justify-between px-3 py-1.5 hover:bg-slate-700/50"
-                      >
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-3 h-3 rounded-sm"
-                            style={{ backgroundColor: layerColor }}
-                          />
-                          <span className="text-sm text-slate-300">
-                            {layer?.name || '不明'}
-                          </span>
-                          <span className="text-xs text-slate-500">
-                            {note.instrument}
-                          </span>
-                        </div>
-                        {!isGlobalLayerActive && (
-                          <button
-                            onClick={() => {
-                              removeNote(note.id);
-                              // ポップアップを更新
-                              setCellPopup(prev => {
-                                if (!prev) return null;
-                                const newNotes = prev.notes.filter((n: { id: string }) => n.id !== note.id);
-                                if (newNotes.length === 0) return null;
-                                return { ...prev, notes: newNotes };
-                              });
-                            }}
-                            className="text-red-400 hover:text-red-300 transition-colors"
-                            title="削除"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="px-3 py-3 text-sm text-slate-500 text-center">
-                  音符がありません
-                </div>
-              )}
-            </div>
-
-            {/* 新規追加ボタン */}
-            {!isGlobalLayerActive && (() => {
-              const activeLayer = layers.find(l => l.id === activeLayerId);
-              const alreadyExists = cellPopup.notes.some(
-                n => n.layerId === activeLayerId && n.instrument === selectedInstrument
-              );
-              const isLocked = activeLayer?.locked;
-              
-              return (
-                <div className="border-t border-slate-700 px-3 py-2">
-                  <div className="text-xs text-slate-500 mb-2">
-                    追加先: {activeLayer?.name || '不明'} / {selectedInstrument}
-                  </div>
-                  {isLocked ? (
-                    <div className="text-xs text-amber-400 text-center py-1">
-                      🔒 レイヤーがロックされています
-                    </div>
-                  ) : alreadyExists ? (
-                    <div className="text-xs text-slate-400 text-center py-1">
-                      同じ楽器の音符が既にあります
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        const tick = cellPopup.tick;
-                        const pitch = cellPopup.pitch;
-                        // ポップアップを先に閉じる
-                        closeCellPopup();
-                        // 音符を追加して音を鳴らす
-                        const result = addNote(tick, pitch, selectedInstrument);
-                        if (result.success) {
-                          playNote(selectedInstrument, pitch);
-                        } else if (result.error) {
-                          setErrorMessage(result.error);
-                          setTimeout(() => setErrorMessage(null), 3000);
-                        }
-                      }}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded transition-colors"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      追加
-                    </button>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
+          />
         )}
       </div>
     </div>

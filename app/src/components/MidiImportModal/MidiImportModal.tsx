@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { 
+import {
   analyzeMidiFile,
   parseMidiFile, 
   readFileAsArrayBuffer, 
@@ -16,6 +16,7 @@ import {
   WarningIcon,
   InfoIcon 
 } from '../icons';
+import { notify } from '../../store/useUiFeedbackStore';
 
 interface MidiImportModalProps {
   layerId: string;
@@ -69,7 +70,11 @@ export const MidiImportModal: React.FC<MidiImportModalProps> = ({
       setMidiImportResult(result);
     } catch (error) {
       console.error('MIDI parse error:', error);
-      alert('MIDIファイルの読み込みに失敗しました。\nファイル形式を確認してください。');
+      notify({
+        title: 'MIDIファイルを読み込めませんでした',
+        message: 'ファイル形式を確認してください。',
+        tone: 'danger',
+      });
     } finally {
       setMidiImportLoading(false);
       event.target.value = '';
@@ -114,7 +119,11 @@ export const MidiImportModal: React.FC<MidiImportModalProps> = ({
   const handleApplyCustomBpm = async () => {
     const bpm = parseInt(customBpm, 10);
     if (isNaN(bpm) || bpm < 20 || bpm > 300) {
-      alert('BPMは20〜300の範囲で入力してください。');
+      notify({
+        title: 'BPMの値を確認してください',
+        message: '20〜300の範囲で入力してください。',
+        tone: 'warning',
+      });
       return;
     }
     await handleTargetBpmChange(bpm);
@@ -128,24 +137,25 @@ export const MidiImportModal: React.FC<MidiImportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden transform transition-all scale-100">
+    <div className="modal-backdrop fixed inset-0 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[calc(100vh-2rem)] overflow-y-auto transform transition-all scale-100" role="dialog" aria-modal="true" aria-labelledby="midi-import-title">
         {/* ヘッダー */}
         <div className="p-6 border-b border-slate-700/50 bg-slate-800/50">
           <div className="flex items-center justify-between mb-1">
-            <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
+            <h2 id="midi-import-title" className="text-xl font-bold text-slate-100 flex items-center gap-2">
               <MidiIcon />
-              <span>Import MIDI File</span>
+              <span>MIDIファイルをインポート</span>
             </h2>
             <button 
               onClick={onClose}
               className="text-slate-400 hover:text-slate-200 transition-colors"
+              aria-label="MIDIインポート画面を閉じる"
             >
               <CloseIcon />
             </button>
           </div>
           <p className="text-sm text-slate-400">
-            Target Layer: <span className="text-purple-400 font-medium">{layerName}</span>
+            対象レイヤー: <span className="text-purple-400 font-medium">{layerName}</span>
           </p>
         </div>
         
@@ -153,7 +163,7 @@ export const MidiImportModal: React.FC<MidiImportModalProps> = ({
         <div className="p-6 space-y-4">
           {/* ファイル選択 */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-300">MIDI File</label>
+            <label className="text-sm font-medium text-slate-300">MIDIファイル</label>
             <div 
               className="border-2 border-dashed border-slate-600 hover:border-purple-500/50 rounded-xl p-8 text-center cursor-pointer transition-colors"
               onClick={() => midiFileInputRef.current?.click()}
@@ -265,7 +275,7 @@ export const MidiImportModal: React.FC<MidiImportModalProps> = ({
                         } ${isClosest ? 'ring-2 ring-cyan-500/50' : ''}`}
                       >
                         {bpm}
-                        {isClosest && <span className="ml-1 text-xs opacity-75">★</span>}
+                        {isClosest && <span className="ml-1 text-xs opacity-75">推奨</span>}
                       </button>
                     );
                   })}
@@ -356,7 +366,7 @@ export const MidiImportModal: React.FC<MidiImportModalProps> = ({
             onClick={onClose}
             className="px-5 py-2.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 rounded-xl transition-all text-sm font-medium"
           >
-            Cancel
+            キャンセル
           </button>
           <button
             onClick={handleMidiImportConfirm}
@@ -364,7 +374,7 @@ export const MidiImportModal: React.FC<MidiImportModalProps> = ({
             disabled={!midiImportResult || midiImportResult.notes.length === 0 || midiImportLoading}
           >
             <MidiIcon />
-            Import {midiImportResult?.notes.length || 0} Notes
+            {midiImportResult?.notes.length || 0}音をインポート
           </button>
         </div>
       </div>

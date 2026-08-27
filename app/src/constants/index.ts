@@ -1,5 +1,13 @@
 // 楽器定義のエクスポート
-export { INSTRUMENTS } from './instruments';
+export {
+  INSTRUMENTS,
+  GAME_VERSIONS,
+  getInstrumentsForVersion,
+  isInstrumentAvailable,
+  normalizeGameVersion,
+  INSTRUMENT_TEXTURES,
+} from './instruments';
+export type { GameVersion } from './instruments';
 
 // 拡張ピッチ関連のエクスポート
 export {
@@ -81,6 +89,9 @@ export const DEFAULT_GRID_SIZE = 4;
 
 // デフォルトのBPM
 export const DEFAULT_BPM = 120;
+
+// 新規プロジェクトの表示名
+export const DEFAULT_PROJECT_NAME = '新規プロジェクト';
 
 // 1小節あたりのtick数
 export const TICKS_PER_BEAT = 4;

@@ -7,6 +7,7 @@ export interface Instrument {
   color: string;
   minecraftSound: string;
   octaveOffset: number; // オクターブオフセット（-2〜+2）
+  minVersion?: '1.12' | '1.14'; // この楽器が利用可能な最小バージョン
 }
 
 // 音符の定義
@@ -62,4 +63,6 @@ export interface EditorSettings {
   selectedInstrument: string;
   snapToGrid: boolean;
 }
+
+export type Theme = 'light' | 'dark';
 

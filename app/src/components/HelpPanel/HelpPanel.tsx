@@ -18,6 +18,14 @@ export const HelpPanel: React.FC = () => {
           <span>範囲選択</span>
         </li>
         <li className="flex items-start gap-2">
+          <span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-mono text-[10px]">Shift+クリック</span>
+          <span>選択中の楽器を強制配置</span>
+        </li>
+        <li className="flex items-start gap-2">
+          <span className="bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded font-mono text-[10px]">ドラッグ</span>
+          <span>選択した音符を一括移動</span>
+        </li>
+        <li className="flex items-start gap-2">
           <span className="bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded font-mono text-[10px]">Ctrl+C</span>
           <span>コピー</span>
         </li>

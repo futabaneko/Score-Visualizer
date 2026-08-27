@@ -1,7 +1,18 @@
 import { create } from 'zustand';
-import type { Note, EditorSettings, PlaybackState, Layer, Selection } from '../types';
-import { DEFAULT_BPM, DEFAULT_ZOOM, DEFAULT_GRID_SIZE, INSTRUMENTS, PITCHES } from '../constants';
+import type { Note, EditorSettings, PlaybackState, Layer, Selection, Theme } from '../types';
+import {
+  DEFAULT_BPM,
+  DEFAULT_GRID_SIZE,
+  DEFAULT_PROJECT_NAME,
+  DEFAULT_ZOOM,
+  INSTRUMENTS,
+  PITCHES,
+  isInstrumentAvailable,
+  normalizeGameVersion,
+} from '../constants';
+import type { GameVersion } from '../constants';
 import { generateId } from '../utils/scoreParser';
+import { clampTotalTicks, DEFAULT_TOTAL_TICKS } from '../utils/timeline';
 
 // 拡張ピッチ表示時のオフセット（通常ピッチ0が拡張ピッチの何番目か）
 const NORMAL_PITCH_OFFSET = 24;
@@ -28,6 +39,13 @@ function calcPitchFromDisplay(displayPitch: number, instrumentId: string): numbe
 // ローカルストレージのキー
 const AUTOSAVE_KEY = 'score-visualizer-autosave';
 const AUTOSAVE_INTERVAL = 5000; // 5秒ごとに自動保存
+const THEME_KEY = 'score-visualizer-theme';
+
+function loadTheme(): Theme {
+  const savedTheme = localStorage.getItem(THEME_KEY);
+  if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
 
 // デフォルトレイヤーの色
 const LAYER_COLORS = [
@@ -59,6 +77,12 @@ interface ScoreState {
   projectName: string;
   bpm: number;
   totalTicks: number;
+
+  // ゲームバージョン
+  gameVersion: GameVersion;
+
+  // 表示テーマ
+  theme: Theme;
   
   // 選択状態
   selectedNotes: Set<string>;
@@ -87,6 +111,7 @@ interface ScoreState {
   setSelection: (selection: Selection | null) => void;
   deselectAll: () => void;
   deleteSelected: () => void;
+  moveSelected: (deltaTick: number, deltaPitch: number) => { success: boolean; error?: string };
   
   // コピー・ペースト
   copySelected: () => void;
@@ -115,12 +140,14 @@ interface ScoreState {
   // プロジェクト
   setProjectName: (name: string) => void;
   setBpm: (bpm: number) => void;
-  setTotalTicks: (ticks: number) => void;
+  setTotalTicks: (ticks: number) => number;
+  setGameVersion: (version: GameVersion) => void;
+  setTheme: (theme: Theme) => void;
   
   // 履歴操作
   undo: () => void;
   redo: () => void;
-  saveToHistory: () => void;
+  saveToHistory: (notes?: Note[], layers?: Layer[]) => void;
   
   // チェックポイント
   setCheckpoint: (tick: number | null) => void;
@@ -161,6 +188,7 @@ const loadFromLocalStorage = (): {
   totalTicks: number;
   activeLayerId: string;
   checkpoint: number | null;
+  gameVersion: GameVersion;
 } | null => {
   try {
     const saved = localStorage.getItem(AUTOSAVE_KEY);
@@ -178,11 +206,12 @@ const loadFromLocalStorage = (): {
     return {
       notes: data.notes,
       layers: data.layers,
-      projectName: data.projectName || '新規プロジェクト',
+      projectName: data.projectName || DEFAULT_PROJECT_NAME,
       bpm: data.bpm || DEFAULT_BPM,
-      totalTicks: data.totalTicks || 200,
+      totalTicks: clampTotalTicks(data.totalTicks ?? DEFAULT_TOTAL_TICKS, data.notes),
       activeLayerId: data.activeLayerId || data.layers.find((l: Layer) => !l.isGlobal)?.id,
       checkpoint: data.checkpoint ?? null,
+      gameVersion: normalizeGameVersion(data.gameVersion),
     };
   } catch (error) {
     console.warn('Failed to load autosave:', error);
@@ -199,6 +228,7 @@ const saveToLocalStorage = (state: {
   totalTicks: number;
   activeLayerId: string;
   checkpoint: number | null;
+  gameVersion: GameVersion;
 }) => {
   try {
     const data = {
@@ -209,6 +239,7 @@ const saveToLocalStorage = (state: {
       totalTicks: state.totalTicks,
       activeLayerId: state.activeLayerId,
       checkpoint: state.checkpoint,
+      gameVersion: state.gameVersion,
       savedAt: new Date().toISOString(),
     };
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(data));
@@ -225,10 +256,12 @@ const defaultLayer = createDefaultLayer();
 const initialNotes = savedState?.notes || [];
 const initialLayers = savedState?.layers || [globalLayer, defaultLayer];
 const initialActiveLayerId = savedState?.activeLayerId || defaultLayer.id;
-const initialProjectName = savedState?.projectName || '新規プロジェクト';
+const initialProjectName = savedState?.projectName || DEFAULT_PROJECT_NAME;
 const initialBpm = savedState?.bpm || DEFAULT_BPM;
-const initialTotalTicks = savedState?.totalTicks || 200;
+const initialTotalTicks = savedState?.totalTicks || DEFAULT_TOTAL_TICKS;
 const initialCheckpoint = savedState?.checkpoint ?? null;
+const initialGameVersion: GameVersion = savedState?.gameVersion || '1.14';
+const initialTheme = loadTheme();
 
 export const useScoreStore = create<ScoreState>((set, get) => ({
   notes: initialNotes,
@@ -251,6 +284,8 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   
   projectName: initialProjectName,
   bpm: initialBpm,
+  gameVersion: initialGameVersion,
+  theme: initialTheme,
   totalTicks: initialTotalTicks,
   
   selectedNotes: new Set(),
@@ -258,18 +293,22 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   
   clipboard: [],
   
-  history: [{ notes: [], layers: [globalLayer, defaultLayer] }],
+  history: [{ notes: [...initialNotes], layers: [...initialLayers] }],
   historyIndex: 0,
   
   checkpoint: initialCheckpoint,
   
   addNote: (tick, pitch, instrument) => {
-    const { notes, activeLayerId, layers, saveToHistory } = get();
+    const { notes, activeLayerId, layers, gameVersion, saveToHistory } = get();
     
     // 全体レイヤーには追加不可
     const activeLayer = layers.find(l => l.id === activeLayerId);
     if (activeLayer?.isGlobal || activeLayer?.locked) {
       return { success: false, error: 'このレイヤーには追加できません' };
+    }
+
+    if (!isInstrumentAvailable(instrument, gameVersion)) {
+      return { success: false, error: '選択中のMinecraftバージョンではこの楽器を使用できません' };
     }
     
     // 通常ピッチ範囲（0〜24）のチェック
@@ -288,7 +327,6 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
     );
     
     if (!exists) {
-      saveToHistory();
       const newNote: Note = {
         id: generateId(),
         tick,
@@ -296,7 +334,9 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
         instrument,
         layerId: activeLayerId,
       };
-      set({ notes: [...notes, newNote] });
+      const updatedNotes = [...notes, newNote];
+      set({ notes: updatedNotes });
+      saveToHistory(updatedNotes, layers);
       return { success: true };
     }
     
@@ -312,8 +352,9 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
     const layer = layers.find(l => l.id === note.layerId);
     if (layer?.locked) return;
     
-    saveToHistory();
-    set({ notes: notes.filter((n) => n.id !== noteId) });
+    const updatedNotes = notes.filter((n) => n.id !== noteId);
+    set({ notes: updatedNotes });
+    saveToHistory(updatedNotes, layers);
   },
   
   removeNotesAt: (tick, pitch) => {
@@ -329,26 +370,26 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       !(n.tick === tick && n.pitch === pitch && n.layerId === activeLayerId && n.instrument === selectedInstrument)
     );
     if (filtered.length !== notes.length) {
-      saveToHistory();
       set({ notes: filtered });
+      saveToHistory(filtered, layers);
     }
   },
   
   clearNotes: () => {
-    const { saveToHistory } = get();
-    saveToHistory();
+    const { layers, saveToHistory } = get();
     set({ notes: [], selectedNotes: new Set(), selection: null });
+    saveToHistory([], layers);
   },
   
   setNotes: (notes) => {
-    const { saveToHistory, activeLayerId } = get();
-    saveToHistory();
+    const { saveToHistory, activeLayerId, layers } = get();
     // インポートした音符にレイヤーIDを付与
     const notesWithLayer = notes.map(n => ({
       ...n,
       layerId: n.layerId || activeLayerId,
     }));
     set({ notes: notesWithLayer, selectedNotes: new Set(), selection: null });
+    saveToHistory(notesWithLayer, layers);
   },
   
   selectNote: (noteId, multi = false) => {
@@ -419,23 +460,75 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       });
       
       if (notesToDelete.length > 0) {
-        saveToHistory();
         const deleteSet = new Set(notesToDelete);
+        const updatedNotes = notes.filter((n) => !deleteSet.has(n.id));
         set({
-          notes: notes.filter((n) => !deleteSet.has(n.id)),
+          notes: updatedNotes,
           selectedNotes: new Set(),
           selection: null,
         });
+        saveToHistory(updatedNotes, layers);
       }
     }
   },
+
+  moveSelected: (deltaTick, deltaPitch) => {
+    const { notes, selectedNotes, layers, totalTicks, selection, saveToHistory } = get();
+    if (selectedNotes.size === 0) return { success: false };
+
+    const selected = notes.filter(note => selectedNotes.has(note.id));
+    const lockedLayerIds = new Set(layers.filter(layer => layer.locked).map(layer => layer.id));
+    if (selected.some(note => lockedLayerIds.has(note.layerId))) {
+      return { success: false, error: 'ロック中のレイヤーにある音符は移動できません' };
+    }
+
+    const moved = selected.map(note => ({
+      ...note,
+      tick: note.tick + deltaTick,
+      pitch: note.pitch + deltaPitch,
+    }));
+
+    if (moved.some(note => note.tick < 0 || note.tick >= totalTicks)) {
+      return { success: false, error: 'タイムラインの範囲外には移動できません' };
+    }
+    if (moved.some(note => note.pitch < 0 || note.pitch >= PITCHES.length)) {
+      return { success: false, error: '楽器の音域外には移動できません' };
+    }
+
+    const stationaryKeys = new Set(
+      notes
+        .filter(note => !selectedNotes.has(note.id))
+        .map(note => `${note.layerId}:${note.instrument}:${note.tick}:${note.pitch}`),
+    );
+    if (moved.some(note => stationaryKeys.has(`${note.layerId}:${note.instrument}:${note.tick}:${note.pitch}`))) {
+      return { success: false, error: '移動先に同じ音符があります' };
+    }
+
+    const movedById = new Map(moved.map(note => [note.id, note]));
+    const updatedNotes = notes.map(note => movedById.get(note.id) || note);
+    set({
+      notes: updatedNotes,
+      selection: selection ? {
+        startTick: selection.startTick + deltaTick,
+        endTick: selection.endTick + deltaTick,
+        startPitch: selection.startPitch + deltaPitch,
+        endPitch: selection.endPitch + deltaPitch,
+      } : null,
+    });
+    saveToHistory(updatedNotes, layers);
+    return { success: true };
+  },
   
   copySelected: () => {
-    const { notes, selectedNotes, activeLayerId } = get();
+    const { notes, selectedNotes, activeLayerId, gameVersion } = get();
     if (selectedNotes.size === 0) return;
     
     // アクティブレイヤーの音符のみコピー
-    const selectedNotesList = notes.filter(n => selectedNotes.has(n.id) && n.layerId === activeLayerId);
+    const selectedNotesList = notes.filter(
+      (note) => selectedNotes.has(note.id)
+        && note.layerId === activeLayerId
+        && isInstrumentAvailable(note.instrument, gameVersion),
+    );
     if (selectedNotesList.length === 0) return;
     
     // displayPitchを計算
@@ -459,19 +552,22 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   },
   
   paste: (tick, targetDisplayPitch) => {
-    const { clipboard, notes, activeLayerId, layers, saveToHistory } = get();
+    const { clipboard, notes, activeLayerId, layers, gameVersion, saveToHistory } = get();
     if (clipboard.length === 0) return;
     
     // 全体レイヤーまたはロックされたレイヤーにはペースト不可
     const activeLayer = layers.find(l => l.id === activeLayerId);
     if (activeLayer?.isGlobal || activeLayer?.locked) return;
     
-    saveToHistory();
-    
+    const compatibleClipboard = clipboard.filter(
+      (note) => isInstrumentAvailable(note.instrument, gameVersion),
+    );
+    if (compatibleClipboard.length === 0) return;
+
     // 新しい位置に音符を配置
     // clipboard.pitchはdisplayPitchの相対位置なので、
     // 各音符のオクターブオフセットを考慮して元のpitchに変換
-    const newNotes = clipboard.map(n => {
+    const newNotes = compatibleClipboard.map(n => {
       const absoluteDisplayPitch = targetDisplayPitch + n.pitch;
       const newPitch = calcPitchFromDisplay(absoluteDisplayPitch, n.instrument);
       
@@ -484,10 +580,12 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       };
     });
     
+    const updatedNotes = [...notes, ...newNotes];
     set({
-      notes: [...notes, ...newNotes],
+      notes: updatedNotes,
       selectedNotes: new Set(newNotes.map(n => n.id)),
     });
+    saveToHistory(updatedNotes, layers);
   },
   
   cut: () => {
@@ -499,7 +597,6 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   // レイヤー操作
   addLayer: () => {
     const { layers, saveToHistory } = get();
-    saveToHistory();
     
     // 全体レイヤーを除いた通常レイヤーの数
     const normalLayers = layers.filter(l => !l.isGlobal);
@@ -513,10 +610,12 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       order: layers.length,
     };
     
+    const updatedLayers = [...layers, newLayer];
     set({
-      layers: [...layers, newLayer],
+      layers: updatedLayers,
       activeLayerId: newLayer.id,
     });
+    saveToHistory(get().notes, updatedLayers);
   },
   
   removeLayer: (layerId) => {
@@ -529,8 +628,6 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
     // 通常レイヤーは最低1つ残す
     const normalLayers = layers.filter(l => !l.isGlobal);
     if (normalLayers.length <= 1) return;
-    
-    saveToHistory();
     
     const newLayers = layers.filter(l => l.id !== layerId);
     const newNotes = notes.filter(n => n.layerId !== layerId);
@@ -547,6 +644,7 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       notes: newNotes,
       activeLayerId: newActiveLayerId,
     });
+    saveToHistory(newNotes, newLayers);
   },
   
   setActiveLayer: (layerId) => {
@@ -640,16 +738,35 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
   },
   
   setTotalTicks: (ticks) => {
-    set({ totalTicks: Math.max(20, ticks) });
+    const totalTicks = clampTotalTicks(ticks, get().notes);
+    set({ totalTicks });
+    return totalTicks;
   },
   
-  saveToHistory: () => {
+  setGameVersion: (version) => {
+    set((state) => ({
+      gameVersion: version,
+      settings: isInstrumentAvailable(state.settings.selectedInstrument, version)
+        ? state.settings
+        : { ...state.settings, selectedInstrument: 'pling' },
+      clipboard: state.clipboard.filter((note) => isInstrumentAvailable(note.instrument, version)),
+    }));
+  },
+
+  setTheme: (theme) => {
+    localStorage.setItem(THEME_KEY, theme);
+    set({ theme });
+  },
+
+  saveToHistory: (nextNotes, nextLayers) => {
     const { notes, layers, history, historyIndex } = get();
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push({ notes: [...notes], layers: [...layers] });
+    const newHistory = [
+      ...history.slice(0, historyIndex + 1),
+      { notes: [...(nextNotes ?? notes)], layers: [...(nextLayers ?? layers)] },
+    ].slice(-50);
     set({
-      history: newHistory.slice(-50), // 最大50件
-      historyIndex: Math.min(newHistory.length - 1, 49),
+      history: newHistory,
+      historyIndex: newHistory.length - 1,
     });
   },
   
@@ -708,9 +825,9 @@ export const useScoreStore = create<ScoreState>((set, get) => ({
       notes: [],
       layers: [newGlobalLayer, newDefaultLayer],
       activeLayerId: newDefaultLayer.id,
-      projectName: '新規プロジェクト',
+      projectName: DEFAULT_PROJECT_NAME,
       bpm: DEFAULT_BPM,
-      totalTicks: 200,
+      totalTicks: DEFAULT_TOTAL_TICKS,
       selectedNotes: new Set(),
       selection: null,
       clipboard: [],
@@ -747,6 +864,7 @@ useScoreStore.subscribe((state) => {
       totalTicks: state.totalTicks,
       activeLayerId: state.activeLayerId,
       checkpoint: state.checkpoint,
+      gameVersion: state.gameVersion,
     });
   }, AUTOSAVE_INTERVAL);
 });
@@ -763,6 +881,7 @@ if (typeof window !== 'undefined') {
       totalTicks: state.totalTicks,
       activeLayerId: state.activeLayerId,
       checkpoint: state.checkpoint,
+      gameVersion: state.gameVersion,
     });
   });
 }

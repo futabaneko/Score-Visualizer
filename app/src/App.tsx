@@ -1,26 +1,31 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Toolbar, PianoRoll, LayerPanel } from './components';
 import { useScoreStore } from './store/useScoreStore';
+import { FeedbackCenter } from './components/FeedbackCenter';
 
 function App() {
-  const [showRestoreNotice, setShowRestoreNotice] = useState(false);
-  const notes = useScoreStore((state) => state.notes);
-  const initialNotesCountRef = useRef(notes.length);
+  const theme = useScoreStore((state) => state.theme);
+  const [showRestoreNotice, setShowRestoreNotice] = useState(
+    () => useScoreStore.getState().notes.length > 0,
+  );
   
   // 初回マウント時に復元されたデータがあれば通知
   useEffect(() => {
-    if (initialNotesCountRef.current > 0) {
-      setShowRestoreNotice(true);
-      const timer = setTimeout(() => setShowRestoreNotice(false), 4000);
-      return () => clearTimeout(timer);
-    }
+    const timer = setTimeout(() => setShowRestoreNotice(false), 4000);
+    return () => clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
+
   return (
-    <div className="h-screen flex flex-col bg-slate-900 text-slate-100 overflow-hidden">
+    <div className="app-shell h-screen flex flex-col overflow-hidden">
+      <FeedbackCenter />
       {/* 復元通知 */}
       {showRestoreNotice && (
-        <div className="fixed bottom-4 right-4 z-[100] bg-emerald-600/90 text-white text-sm px-4 py-3 rounded-lg shadow-lg backdrop-blur-sm border border-emerald-500/50 animate-fade-in flex items-center gap-2">
+        <div className="toast toast-success fixed bottom-4 right-4 z-[100] text-sm px-4 py-3 rounded-lg border animate-fade-in flex items-center gap-2">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
@@ -35,14 +40,14 @@ function App() {
       )}
       
       {/* 上部：ツールバー + 楽器パレット */}
-      <header className="flex-shrink-0 border-b border-slate-700/50 bg-slate-800/80 backdrop-blur-sm z-50 relative">
+      <header className="app-header flex-shrink-0 border-b z-50 relative">
         <Toolbar />
       </header>
 
       {/* メインエリア */}
       <div className="flex flex-1 overflow-hidden">
         {/* 左サイドバー：レイヤーパネル */}
-        <aside className="w-60 flex-shrink-0 border-r border-slate-700/50 bg-slate-800/50 overflow-y-auto">
+        <aside className="app-sidebar w-60 flex-shrink-0 border-r overflow-y-auto">
           <LayerPanel />
         </aside>
 

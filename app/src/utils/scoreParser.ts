@@ -20,7 +20,7 @@ INSTRUMENTS.forEach((inst) => {
  */
 export function parseScore(score: string): Note[] {
   const notes: Note[] = [];
-  const symbols = '!/\\?_,^@*()~';
+  const symbols = '!/\\?_,^@*()~#$;&+';
   const numbers = '1234567890';
 
   let currentTick = 0;

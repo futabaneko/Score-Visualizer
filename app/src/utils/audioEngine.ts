@@ -16,6 +16,12 @@ const INSTRUMENT_SOUND_FILES: Record<string, string> = {
   snare: 'snare.ogg',
   hat: 'hat.ogg',
   exp: 'pling.ogg', // 経験値音はplingで代用
+  // 1.14.x 以降
+  iron_xylophone: 'iron_xylophone.ogg',
+  cow_bell: 'cow_bell.ogg',
+  didgeridoo: 'didgeridoo.ogg',
+  bit: 'bit.ogg',
+  banjo: 'banjo.ogg',
 };
 
 // オーディオバッファのキャッシュ
@@ -153,7 +159,7 @@ export function playNoteBatch(notes: Array<{ instrument: string; pitch: number }
       source.playbackRate.value = pitchToPlaybackRate(pitch);
       source.connect(masterGain);
       source.start(currentTime); // 同じタイミングで開始
-    } catch (error) {
+    } catch {
       // 個別のエラーは無視して続行
     }
   }

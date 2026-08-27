@@ -1,6 +1,6 @@
 [package]
 name = "score-editor"
-version = "1.0.0"
+version = "1.2.0"
 description = "Minecraft音ブロック作曲ツール"
 authors = ["futabaneko"]
 license = "MIT"

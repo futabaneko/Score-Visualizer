@@ -1,16 +1,17 @@
 import React from 'react';
 import { useScoreStore } from '../../store/useScoreStore';
+import { MusicNoteIcon } from '../icons';
 
 export const Header: React.FC = () => {
   const { projectName, notes } = useScoreStore();
 
   return (
-    <header className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg">
+    <header className="app-header border-b text-slate-100">
       <div className="container mx-auto px-4 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <span className="text-3xl">🎵</span>
+              <MusicNoteIcon />
               <div>
                 <h1 className="text-xl font-bold">Minecraft Score Editor</h1>
                 <p className="text-sm text-indigo-200">音ブロック楽譜エディタ</p>

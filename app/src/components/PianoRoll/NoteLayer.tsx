@@ -29,8 +29,8 @@ export const NoteLayer = React.memo<NoteLayerProps>(({
   cellWidth, 
   cellHeight, 
   currentPitchCount, 
-  isGlobalLayerActive, 
-  selectedNotes, 
+  isGlobalLayerActive,
+  selectedNotes,
   layerColorMap,
   layerNameMap,
   leftBuffer,
@@ -91,17 +91,15 @@ export const NoteLayer = React.memo<NoteLayerProps>(({
                 ? EXTENDED_NOTE_NAMES[displayPitch] 
                 : NOTE_NAMES[displayPitch];
               const originalPitchName = PITCHES[note.pitch];
+              const noteColor = layerColorMap.get(note.layerId) || instrument?.color || '#64748b';
               
-              // レイヤー色を高速に取得
-              const noteColor = layerColorMap.get(note.layerId) || instrument?.color || '#888888';
-
               return (
                 <div
                   key={note.id}
                   className={`
-                    absolute rounded cursor-pointer shadow-md
+                    score-note absolute rounded cursor-pointer shadow-sm
                     ${isSelected ? 'ring-2 ring-cyan-400 ring-offset-1 ring-offset-slate-900 z-20' : ''}
-                    ${hasOctaveOffset ? 'border border-dashed border-white/40' : ''}
+                    ${hasOctaveOffset ? 'border-dashed' : ''}
                   `}
                   style={{
                     left: offsetX,
@@ -115,7 +113,7 @@ export const NoteLayer = React.memo<NoteLayerProps>(({
                 >
                   {/* 楽器記号を表示（オクターブオフセットがある場合は色を変える） */}
                   {cellWidth > 18 && !hasMultiple && (
-                    <span className={`text-[8px] font-bold absolute inset-0 flex items-center justify-center ${hasOctaveOffset ? 'text-yellow-300' : 'text-white/80'}`}>
+                    <span className="text-[8px] font-bold text-white absolute inset-0 flex items-center justify-center">
                       {instrument?.symbol}
                     </span>
                   )}
