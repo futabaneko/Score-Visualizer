@@ -28,6 +28,8 @@ import {
   FolderOpenIcon,
 } from '../icons';
 
+const IS_MIDI_IMPORT_DISABLED = import.meta.env.VITE_DISABLE_MIDI_IMPORT === 'true';
+
 export const LayerPanel: React.FC = () => {
   const {
     layers,
@@ -291,6 +293,7 @@ export const LayerPanel: React.FC = () => {
 
   // MIDIインポートモーダルを開く
   const handleMidiImport = (layerId: string) => {
+    if (IS_MIDI_IMPORT_DISABLED) return;
     const layer = layers.find(l => l.id === layerId);
     if (layer?.isGlobal) return; // 全体レイヤーにはインポート不可
     setShowMidiImportModal(layerId);
@@ -523,13 +526,21 @@ export const LayerPanel: React.FC = () => {
               <div className={`flex items-center gap-0.5 ${activeLayerId === layer.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
               {/* MIDIインポート */}
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleMidiImport(layer.id);
                 }}
-                className="p-1 text-slate-500 hover:text-purple-400 hover:bg-purple-500/20 rounded transition-colors"
-                title="MIDIインポート"
-                aria-label={`${layer.name}へMIDIをインポート`}
+                disabled={IS_MIDI_IMPORT_DISABLED}
+                className={`p-1 rounded transition-colors ${IS_MIDI_IMPORT_DISABLED
+                  ? 'cursor-not-allowed text-slate-400/50 opacity-50'
+                  : 'text-slate-500 hover:text-purple-400 hover:bg-purple-500/20'
+                }`}
+                title={IS_MIDI_IMPORT_DISABLED ? 'GitHub Pages版ではMIDIインポートを利用できません' : 'MIDIインポート'}
+                aria-label={IS_MIDI_IMPORT_DISABLED
+                  ? `${layer.name}へのMIDIインポート（GitHub Pages版では利用不可）`
+                  : `${layer.name}へMIDIをインポート`
+                }
               >
                 <MidiIcon />
               </button>
@@ -739,7 +750,7 @@ export const LayerPanel: React.FC = () => {
       )}
 
       {/* MIDIインポートモーダル */}
-      {showMidiImportModal && (
+      {!IS_MIDI_IMPORT_DISABLED && showMidiImportModal && (
         <MidiImportModal
           layerId={showMidiImportModal}
           layerName={layers.find(l => l.id === showMidiImportModal)?.name || 'Layer'}
